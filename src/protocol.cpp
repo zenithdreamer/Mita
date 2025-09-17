@@ -59,6 +59,10 @@ IoTProtocol::IoTProtocol()
     ble_server = nullptr;
     ble_characteristic = nullptr;
 
+    // Initialize BLE packet buffering
+    ble_packet_length = 0;
+    ble_packet_available = false;
+
     // Initialize session key to zeros
     memset(session_key, 0, SESSION_KEY_SIZE);
 }
@@ -200,17 +204,23 @@ bool IoTProtocol::connectViaBLE()
         return false;
     }
 
-    // Wait a bit for GATT discovery, then start handshake
-    delay(1000);
+    // Wait for GATT discovery and notification setup before starting handshake
+    delay(3000);
+
+    // Set active transport to BLE now that connection is established
+    // This must be done BEFORE handshake so sendPacket() works
+    active_transport = TRANSPORT_BLE;
+    ble_connected = true;
+    Serial.printf("BLE connection established, active_transport set to %d, starting handshake...\n", active_transport);
 
     if (!performHandshake())
     {
         Serial.println("BLE handshake failed");
+        ble_connected = false;
         return false;
     }
 
-    ble_connected = true;
-    Serial.println("BLE connection successful");
+    Serial.println("BLE connection and handshake successful");
     return true;
 }
 
@@ -632,7 +642,12 @@ bool IoTProtocol::sendHello()
     packet.payload_length = offset;
 
     Serial.printf("Sending HELLO (nonce1: 0x%08X)\n", nonce1);
-    return sendPacket(packet);
+    Serial.printf("Packet details: version_flags=0x%02X, msg_type=0x%02X, source=0x%04X, dest=0x%04X, payload_len=%d\n",
+                  packet.version_flags, packet.msg_type, packet.source_addr, packet.dest_addr, packet.payload_length);
+
+    bool result = sendPacket(packet);
+    Serial.printf("sendPacket result: %s\n", result ? "SUCCESS" : "FAILED");
+    return result;
 }
 
 bool IoTProtocol::receiveChallenge()
@@ -1101,31 +1116,68 @@ bool IoTProtocol::receiveWiFiPacket(ProtocolPacket &packet, unsigned long timeou
 
 bool IoTProtocol::receiveBLEPacket(ProtocolPacket &packet, unsigned long timeout_ms)
 {
-    // BLE packets are received via callbacks and stored in a queue
-    // For simplicity, this is implemented with a basic polling mechanism
-    // TODO: In a full implementation, this would use a queue
+    // Only print debug for longer timeouts (handshake phase) to reduce spam
+    bool debug_enabled = (timeout_ms > 100);
+
+    if (debug_enabled) {
+        Serial.printf("receiveBLEPacket: waiting for packet (timeout=%lu ms)\n", timeout_ms);
+    }
+
     unsigned long start_time = millis();
 
     while (millis() - start_time < timeout_ms)
     {
+        // Check if a packet is available in the buffer
+        if (ble_packet_available)
+        {
+            Serial.printf("Found BLE packet in buffer: %d bytes\n", ble_packet_length);
+
+            // Parse the packet from the buffer
+            if (deserializePacket(ble_packet_buffer, ble_packet_length, packet))
+            {
+                Serial.printf("Successfully parsed BLE packet: type=0x%02X, src=0x%04X, dest=0x%04X\n",
+                              packet.msg_type, packet.source_addr, packet.dest_addr);
+
+                // Clear the buffer
+                ble_packet_available = false;
+                ble_packet_length = 0;
+
+                return true;
+            }
+            else
+            {
+                Serial.println("Failed to parse BLE packet from buffer");
+                ble_packet_available = false;
+                ble_packet_length = 0;
+            }
+        }
+
         delay(10);
-        // Check if data is available (would be implemented with a queue)
-        // For now, return false as BLE receiving is handled in callbacks
     }
 
+    // Only print timeout message for longer timeouts to reduce spam
+    if (debug_enabled) {
+        Serial.println("receiveBLEPacket: timeout - no packet received");
+    }
     return false;
 }
 
 bool IoTProtocol::sendPacket(const ProtocolPacket &packet)
 {
+    Serial.printf("sendPacket: active_transport=%d (WIFI=0, BLE=1)\n", active_transport);
+
     if (active_transport == TRANSPORT_WIFI)
     {
+        Serial.println("Routing packet to WiFi");
         return sendWiFiPacket(packet);
     }
     else if (active_transport == TRANSPORT_BLE)
     {
+        Serial.println("Routing packet to BLE");
         return sendBLEPacket(packet);
     }
+
+    Serial.println("ERROR: No active transport set!");
     return false;
 }
 
@@ -1147,20 +1199,49 @@ bool IoTProtocol::sendWiFiPacket(const ProtocolPacket &packet)
 
 bool IoTProtocol::sendBLEPacket(const ProtocolPacket &packet)
 {
-    if (!ble_characteristic || !ble_client_connected)
+    Serial.printf("sendBLEPacket: Starting packet send, type=0x%02X\n", packet.msg_type);
+
+    if (!ble_characteristic)
     {
+        Serial.println("BLE packet send failed: ble_characteristic is NULL");
         return false;
     }
+
+    if (!ble_client_connected)
+    {
+        Serial.println("BLE packet send failed: ble_client_connected is false");
+        return false;
+    }
+
+    Serial.println("BLE packet send: characteristic and client are ready");
 
     uint8_t buffer[HEADER_SIZE + MAX_PAYLOAD_SIZE];
     size_t length;
 
     serializePacket(packet, buffer, length);
 
-    ble_characteristic->setValue(buffer, length);
-    ble_characteristic->notify();
+    Serial.printf("Serialized packet: type=0x%02X, length=%d bytes\n", packet.msg_type, length);
+    Serial.printf("Buffer contents (first 16 bytes): ");
+    for (int i = 0; i < min(16, (int)length); i++) {
+        Serial.printf("%02X ", buffer[i]);
+    }
+    Serial.println();
 
-    return true;
+    try {
+        // Set the characteristic value (this will trigger the router's onWrite callback)
+        ble_characteristic->setValue(buffer, length);
+        Serial.println("setValue() completed successfully");
+
+        // Notify the router that new data is available
+        ble_characteristic->notify();
+        Serial.println("notify() completed successfully");
+
+        Serial.println("BLE packet sent successfully");
+        return true;
+    } catch (...) {
+        Serial.println("Exception occurred during BLE packet send");
+        return false;
+    }
 }
 
 void IoTProtocol::serializePacket(const ProtocolPacket &packet, uint8_t *buffer, size_t &length)
@@ -1273,6 +1354,24 @@ void IoTProtocol::onBLEDisconnect()
 void IoTProtocol::onBLEWrite(const uint8_t *data, size_t length)
 {
     Serial.printf("BLE data received: %d bytes\n", length);
-    // Process incoming BLE data
-    // TODO: In a full implementation, this would parse packets and handle them
+
+    // Store packet in buffer for later processing
+    if (length <= sizeof(ble_packet_buffer))
+    {
+        memcpy(ble_packet_buffer, data, length);
+        ble_packet_length = length;
+        ble_packet_available = true;
+        Serial.println("BLE packet stored in buffer");
+
+        // Debug: show first 16 bytes
+        Serial.printf("Received data (first 16 bytes): ");
+        for (size_t i = 0; i < min((size_t)16, length); i++) {
+            Serial.printf("%02X ", data[i]);
+        }
+        Serial.println();
+    }
+    else
+    {
+        Serial.printf("BLE packet too large: %d bytes (max %d)\n", length, sizeof(ble_packet_buffer));
+    }
 }

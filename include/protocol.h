@@ -99,6 +99,11 @@ private:
     String ble_service_uuid;
     String ble_char_uuid;
 
+    // BLE packet buffering
+    uint8_t ble_packet_buffer[HEADER_SIZE + MAX_PAYLOAD_SIZE];
+    size_t ble_packet_length;
+    bool ble_packet_available;
+
     // State
     bool handshake_completed;
     uint32_t nonce1;

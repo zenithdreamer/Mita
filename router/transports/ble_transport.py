@@ -68,9 +68,7 @@ class BLEDeviceHandler:
             self.logger.info("Connected to BLE device")
             
             # Discover services
-            await self.client.get_services()
-            
-            # Find our custom service and characteristic
+            # Access services directly from the client
             service = self.client.services.get_service(self.config.ble.service_uuid)
             if not service:
                 self.logger.error("Custom service not found on BLE device")

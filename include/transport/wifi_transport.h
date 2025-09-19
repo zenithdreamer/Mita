@@ -2,8 +2,9 @@
 #define WIFI_TRANSPORT_H
 
 #include <WiFi.h>
-#include "../common/transport_interface.h"
-#include "../common/protocol_types.h"
+#include "../../shared/protocol/transport_interface.h"
+#include "../../shared/protocol/protocol_types.h"
+#include "../../shared/transport/transport_constants.h"
 
 class WiFiTransport : public ITransport {
 private:
@@ -11,13 +12,10 @@ private:
     bool connected;
     String discovered_ssid;
     String shared_secret;
-    static const uint16_t MITA_PORT = 8000;
 
     bool scanForRouter();
     bool connectToAP();
     bool establishTCPConnection();
-    void serializePacket(const ProtocolPacket& packet, uint8_t* buffer, size_t& length);
-    bool deserializePacket(const uint8_t* buffer, size_t length, ProtocolPacket& packet);
 
 public:
     WiFiTransport();

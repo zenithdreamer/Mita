@@ -1,4 +1,6 @@
 #include "../include/transport/wifi_transport.h"
+#include "../shared/protocol/packet_utils.h"
+#include "../shared/config/mita_config.h"
 
 WiFiTransport::WiFiTransport()
     : connected(false), shared_secret("Mita_password")
@@ -63,7 +65,7 @@ bool WiFiTransport::sendPacket(const ProtocolPacket &packet)
 
     uint8_t buffer[HEADER_SIZE + MAX_PAYLOAD_SIZE];
     size_t length;
-    serializePacket(packet, buffer, length);
+    PacketUtils::serializePacket(packet, buffer, length);
 
     size_t sent = client.write(buffer, length);
     return sent == length;
@@ -91,7 +93,7 @@ bool WiFiTransport::receivePacket(ProtocolPacket &packet, unsigned long timeout_
                 uint8_t payload_length = buffer[6];
                 if (received >= HEADER_SIZE + payload_length)
                 {
-                    return deserializePacket(buffer, HEADER_SIZE + payload_length, packet);
+                    return PacketUtils::deserializePacket(buffer, HEADER_SIZE + payload_length, packet);
                 }
             }
         }
@@ -141,8 +143,8 @@ bool WiFiTransport::scanForRouter()
     Serial.printf("WiFiTransport: Found %d networks\n", networks);
 
     String patterns[] = {
-        "Mita_Router_1",
-        "Mita_Network"};
+        MITA_DEFAULT_ROUTER_ID,
+        MITA_NETWORK_SSID};
 
     for (int i = 0; i < networks; i++)
     {
@@ -198,9 +200,9 @@ bool WiFiTransport::establishTCPConnection()
 {
     IPAddress gateway = WiFi.gatewayIP();
     Serial.printf("WiFiTransport: Connecting to router at %s:%d\n",
-                  gateway.toString().c_str(), MITA_PORT);
+                  gateway.toString().c_str(), MITA_WIFI_PORT);
 
-    if (client.connect(gateway, MITA_PORT))
+    if (client.connect(gateway, MITA_WIFI_PORT))
     {
         Serial.println("WiFiTransport: TCP connection established");
         return true;
@@ -212,48 +214,3 @@ bool WiFiTransport::establishTCPConnection()
     }
 }
 
-void WiFiTransport::serializePacket(const ProtocolPacket &packet, uint8_t *buffer, size_t &length)
-{
-    buffer[0] = packet.version_flags;
-    buffer[1] = packet.msg_type;
-    buffer[2] = (packet.source_addr >> 8) & 0xFF;
-    buffer[3] = packet.source_addr & 0xFF;
-    buffer[4] = (packet.dest_addr >> 8) & 0xFF;
-    buffer[5] = packet.dest_addr & 0xFF;
-    buffer[6] = packet.payload_length;
-    buffer[7] = packet.reserved;
-
-    if (packet.payload_length > 0)
-    {
-        memcpy(buffer + HEADER_SIZE, packet.payload, packet.payload_length);
-    }
-
-    length = HEADER_SIZE + packet.payload_length;
-}
-
-bool WiFiTransport::deserializePacket(const uint8_t *buffer, size_t length, ProtocolPacket &packet)
-{
-    if (length < HEADER_SIZE)
-    {
-        return false;
-    }
-
-    packet.version_flags = buffer[0];
-    packet.msg_type = buffer[1];
-    packet.source_addr = (buffer[2] << 8) | buffer[3];
-    packet.dest_addr = (buffer[4] << 8) | buffer[5];
-    packet.payload_length = buffer[6];
-    packet.reserved = buffer[7];
-
-    if (length < HEADER_SIZE + packet.payload_length)
-    {
-        return false;
-    }
-
-    if (packet.payload_length > 0)
-    {
-        memcpy(packet.payload, buffer + HEADER_SIZE, packet.payload_length);
-    }
-
-    return true;
-}

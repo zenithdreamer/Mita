@@ -1,4 +1,6 @@
 #include "../include/transport/ble_transport.h"
+#include "../shared/protocol/packet_utils.h"
+#include "../shared/config/mita_config.h"
 
 // BLE Callback implementations
 MitaBLEServerCallbacks::MitaBLEServerCallbacks(BLETransport *transport) : transport(transport) {}
@@ -102,7 +104,7 @@ bool BLETransport::sendPacket(const ProtocolPacket &packet)
 
     uint8_t buffer[HEADER_SIZE + MAX_PAYLOAD_SIZE];
     size_t length;
-    serializePacket(packet, buffer, length);
+    PacketUtils::serializePacket(packet, buffer, length);
 
     try
     {
@@ -125,7 +127,7 @@ bool BLETransport::receivePacket(ProtocolPacket &packet, unsigned long timeout_m
     {
         if (packet_available)
         {
-            if (deserializePacket(packet_buffer, packet_length, packet))
+            if (PacketUtils::deserializePacket(packet_buffer, packet_length, packet))
             {
                 packet_available = false;
                 packet_length = 0;
@@ -211,8 +213,8 @@ bool BLETransport::startAdvertising()
     esp_ble_gap_set_device_name(ble_name.c_str());
 
     advertising->setScanResponse(true);
-    advertising->setMinPreferred(0x06);
-    advertising->setMinPreferred(0x12);
+    advertising->setMinPreferred(MITA_BLE_MIN_INTERVAL);
+    advertising->setMinPreferred(MITA_BLE_MAX_INTERVAL);
 
     BLEDevice::startAdvertising();
 
@@ -220,48 +222,3 @@ bool BLETransport::startAdvertising()
     return true;
 }
 
-void BLETransport::serializePacket(const ProtocolPacket &packet, uint8_t *buffer, size_t &length)
-{
-    buffer[0] = packet.version_flags;
-    buffer[1] = packet.msg_type;
-    buffer[2] = (packet.source_addr >> 8) & 0xFF;
-    buffer[3] = packet.source_addr & 0xFF;
-    buffer[4] = (packet.dest_addr >> 8) & 0xFF;
-    buffer[5] = packet.dest_addr & 0xFF;
-    buffer[6] = packet.payload_length;
-    buffer[7] = packet.reserved;
-
-    if (packet.payload_length > 0)
-    {
-        memcpy(buffer + HEADER_SIZE, packet.payload, packet.payload_length);
-    }
-
-    length = HEADER_SIZE + packet.payload_length;
-}
-
-bool BLETransport::deserializePacket(const uint8_t *buffer, size_t length, ProtocolPacket &packet)
-{
-    if (length < HEADER_SIZE)
-    {
-        return false;
-    }
-
-    packet.version_flags = buffer[0];
-    packet.msg_type = buffer[1];
-    packet.source_addr = (buffer[2] << 8) | buffer[3];
-    packet.dest_addr = (buffer[4] << 8) | buffer[5];
-    packet.payload_length = buffer[6];
-    packet.reserved = buffer[7];
-
-    if (length < HEADER_SIZE + packet.payload_length)
-    {
-        return false;
-    }
-
-    if (packet.payload_length > 0)
-    {
-        memcpy(packet.payload, buffer + HEADER_SIZE, packet.payload_length);
-    }
-
-    return true;
-}

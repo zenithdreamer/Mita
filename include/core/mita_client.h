@@ -3,10 +3,10 @@
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
-#include "../common/transport_interface.h"
+#include "../../shared/protocol/transport_interface.h"
 #include "../crypto/crypto_service.h"
 #include "../messaging/message_handler.h"
-#include "../common/protocol_types.h"
+#include "../../shared/protocol/protocol_types.h"
 
 class MitaClient
 {

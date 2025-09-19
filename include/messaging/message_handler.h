@@ -3,7 +3,7 @@
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
-#include "../common/protocol_types.h"
+#include "../../shared/protocol/protocol_types.h"
 
 class IMessageHandler
 {

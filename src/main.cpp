@@ -7,15 +7,16 @@
 #include "transport/wifi_transport.h"
 #include "transport/ble_transport.h"
 #include "messaging/message_handler.h"
+#include "../shared/config/mita_config.h"
 
 #ifndef LED_BUILTIN
 #define LED_BUILTIN 2
 #endif
 
 // Configuration - these would normally be loaded from NVRAM or config file
-const char *ROUTER_ID = "Mita_Router_1";
-const char *SHARED_SECRET = "Mita_password";
-const char *DEVICE_ID = "ESP32_Sensor_001";
+const char *ROUTER_ID = MITA_DEFAULT_ROUTER_ID;
+const char *SHARED_SECRET = MITA_DEFAULT_SHARED_SECRET;
+const char *DEVICE_ID = MITA_DEFAULT_DEVICE_ID;
 
 // Global objects using dependency injection
 MitaClient *mitaClient = nullptr;
@@ -74,8 +75,8 @@ void loop()
         static unsigned long last_reconnect_attempt = 0;
         unsigned long current_time = millis();
 
-        if (current_time - last_reconnect_attempt >= 10000)
-        { // Try every 10 seconds
+        if (current_time - last_reconnect_attempt >= MITA_RECONNECT_INTERVAL_MS)
+        { // Try reconnecting at configured interval
             Serial.println("Connection lost, attempting to reconnect...");
             if (connectToNetwork())
             {

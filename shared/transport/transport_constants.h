@@ -1,0 +1,15 @@
+#ifndef TRANSPORT_CONSTANTS_H
+#define TRANSPORT_CONSTANTS_H
+
+// WiFi Transport Constants
+#define MITA_WIFI_PORT 8000
+
+// BLE Transport Constants
+#define MITA_SERVICE_UUID "12345678-1234-1234-1234-123456789abc"
+#define MITA_CHARACTERISTIC_UUID "12345678-1234-1234-1234-123456789abd"
+
+// WiFi Network Discovery Patterns
+#define MITA_ROUTER_SSID_PATTERN "Mita_Router_"
+#define MITA_NETWORK_SSID "Mita_Network"
+
+#endif // TRANSPORT_CONSTANTS_H

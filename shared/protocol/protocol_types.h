@@ -60,6 +60,4 @@ struct NetworkConfig
     String device_id;
 };
 
-// WiFiConfig and BLEConfig removed - using auto-discovery with hardcoded values
-
 #endif // PROTOCOL_TYPES_H

@@ -5,7 +5,7 @@
 #include <mbedtls/md.h>
 #include <mbedtls/aes.h>
 #include <esp_random.h>
-#include "../common/protocol_types.h"
+#include "../../shared/protocol/protocol_types.h"
 
 class CryptoService
 {

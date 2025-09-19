@@ -5,12 +5,9 @@
 #include <BLEServer.h>
 #include <BLEUtils.h>
 #include <BLE2902.h>
-#include "../common/transport_interface.h"
-#include "../common/protocol_types.h"
-
-// BLE Service and Characteristic UUIDs
-#define MITA_SERVICE_UUID "12345678-1234-1234-1234-123456789abc"
-#define MITA_CHARACTERISTIC_UUID "12345678-1234-1234-1234-123456789abd"
+#include "../../shared/protocol/transport_interface.h"
+#include "../../shared/protocol/protocol_types.h"
+#include "../../shared/transport/transport_constants.h"
 
 // Forward declarations
 class BLETransport;
@@ -51,8 +48,6 @@ private:
 
     bool setupServer();
     bool startAdvertising();
-    void serializePacket(const ProtocolPacket& packet, uint8_t* buffer, size_t& length);
-    bool deserializePacket(const uint8_t* buffer, size_t length, ProtocolPacket& packet);
 
 public:
     BLETransport(const String& device_id, const String& router_id);

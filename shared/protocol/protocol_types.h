@@ -1,7 +1,13 @@
 #ifndef PROTOCOL_TYPES_H
 #define PROTOCOL_TYPES_H
 
+// Platform-specific includes
+#ifdef ARDUINO
 #include <Arduino.h>
+#else
+#include <stdint.h>
+#include <cstddef>
+#endif
 
 // Protocol constants
 #define PROTOCOL_VERSION 1
@@ -15,33 +21,50 @@
 #define AES_BLOCK_SIZE 16
 #define NONCE_SIZE 4
 
-// Special addresses
-#define ROUTER_ADDRESS 0x0000
-#define BROADCAST_ADDRESS 0xFFFF
-#define UNASSIGNED_ADDRESS 0x0000
+// Special addresses (with PROTOCOL_ prefix to avoid conflicts)
+#define PROTOCOL_ROUTER_ADDRESS 0x0000
+#define PROTOCOL_BROADCAST_ADDRESS 0xFFFF
+#define PROTOCOL_UNASSIGNED_ADDRESS 0x0000
 
 // Message types
-enum MessageType
+enum class MessageType : uint8_t
 {
-    MSG_HELLO = 0x01,
-    MSG_CHALLENGE = 0x02,
-    MSG_AUTH = 0x03,
-    MSG_AUTH_ACK = 0x04,
-    MSG_DATA = 0x05,
-    MSG_ACK = 0x06,
-    MSG_CONTROL = 0x07,
-    MSG_ERROR = 0xFF
+    HELLO = 0x01,
+    CHALLENGE = 0x02,
+    AUTH = 0x03,
+    AUTH_ACK = 0x04,
+    DATA = 0x05,
+    ACK = 0x06,
+    CONTROL = 0x07,
+    ERROR = 0xFF
 };
 
 // Transport types
-enum TransportType
+enum class TransportType : uint8_t
 {
-    TRANSPORT_WIFI,
-    TRANSPORT_BLE
+    WIFI = 0,
+    BLE = 1
 };
 
-// Protocol packet structure
-struct ProtocolPacket
+// Universal constants that work for both C++ router and Arduino client
+constexpr TransportType TRANSPORT_WIFI = TransportType::WIFI;
+constexpr TransportType TRANSPORT_BLE = TransportType::BLE;
+
+constexpr uint8_t MSG_HELLO = static_cast<uint8_t>(MessageType::HELLO);
+constexpr uint8_t MSG_CHALLENGE = static_cast<uint8_t>(MessageType::CHALLENGE);
+constexpr uint8_t MSG_AUTH = static_cast<uint8_t>(MessageType::AUTH);
+constexpr uint8_t MSG_AUTH_ACK = static_cast<uint8_t>(MessageType::AUTH_ACK);
+constexpr uint8_t MSG_DATA = static_cast<uint8_t>(MessageType::DATA);
+constexpr uint8_t MSG_ACK = static_cast<uint8_t>(MessageType::ACK);
+constexpr uint8_t MSG_CONTROL = static_cast<uint8_t>(MessageType::CONTROL);
+constexpr uint8_t MSG_ERROR = static_cast<uint8_t>(MessageType::ERROR);
+
+constexpr uint16_t ROUTER_ADDRESS = PROTOCOL_ROUTER_ADDRESS;
+constexpr uint16_t UNASSIGNED_ADDRESS = PROTOCOL_UNASSIGNED_ADDRESS;
+constexpr uint16_t BROADCAST_ADDRESS = PROTOCOL_BROADCAST_ADDRESS;
+
+// Protocol packet structure (for embedded use)
+struct BasicProtocolPacket
 {
     uint8_t version_flags;
     uint8_t msg_type;
@@ -52,12 +75,21 @@ struct ProtocolPacket
     uint8_t payload[MAX_PAYLOAD_SIZE];
 };
 
+// Alias for backward compatibility
+typedef BasicProtocolPacket ProtocolPacket;
+
 // Configuration structures
 struct NetworkConfig
 {
+#ifdef ARDUINO
     String router_id;
     String shared_secret;
     String device_id;
+#else
+    char router_id[64];
+    char shared_secret[32];
+    char device_id[32];
+#endif
 };
 
 #endif // PROTOCOL_TYPES_H

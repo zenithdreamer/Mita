@@ -6,7 +6,7 @@
 
 class PacketUtils {
 public:
-    static void serializePacket(const ProtocolPacket& packet, uint8_t* buffer, size_t& length) {
+    static void serializePacket(const BasicProtocolPacket& packet, uint8_t* buffer, size_t& length) {
         buffer[0] = packet.version_flags;
         buffer[1] = packet.msg_type;
         buffer[2] = (packet.source_addr >> 8) & 0xFF;
@@ -23,7 +23,7 @@ public:
         length = HEADER_SIZE + packet.payload_length;
     }
 
-    static bool deserializePacket(const uint8_t* buffer, size_t length, ProtocolPacket& packet) {
+    static bool deserializePacket(const uint8_t* buffer, size_t length, BasicProtocolPacket& packet) {
         if (length < HEADER_SIZE) {
             return false;
         }

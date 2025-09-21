@@ -29,6 +29,16 @@ private:
 public:
     MitaBLECharacteristicCallbacks(BLETransport* transport);
     void onWrite(BLECharacteristic* characteristic) override;
+    void onNotify(BLECharacteristic* characteristic) override;
+};
+
+class MitaBLEDescriptorCallbacks : public BLEDescriptorCallbacks {
+private:
+    BLETransport* transport;
+
+public:
+    MitaBLEDescriptorCallbacks(BLETransport* transport);
+    void onWrite(BLEDescriptor* descriptor) override;
 };
 
 class BLETransport : public ITransport {
@@ -40,6 +50,7 @@ private:
 
     bool ble_connected;
     bool client_connected;
+    bool notifications_enabled;
 
     // Packet buffering
     uint8_t packet_buffer[HEADER_SIZE + MAX_PAYLOAD_SIZE];
@@ -67,6 +78,8 @@ public:
     void onClientConnect();
     void onClientDisconnect();
     void onDataReceived(const uint8_t* data, size_t length);
+    void onNotificationsEnabled();
+    void onNotificationsDisabled();
 
     // BLE-specific methods
 };

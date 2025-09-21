@@ -1,0 +1,36 @@
+[Unit]
+Description=Mita Multi-Protocol IoT Router
+Documentation=file:///usr/local/share/doc/mita-router/README.md
+After=network.target bluetooth.service NetworkManager.service
+Wants=network.target bluetooth.service NetworkManager.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/local/bin/mita_router -c /etc/mita/router_config.json
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Security settings
+NoNewPrivileges=false
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/var/log/mita /etc/mita
+
+# Process settings
+TimeoutStartSec=30
+TimeoutStopSec=30
+KillMode=mixed
+KillSignal=SIGTERM
+
+# Resource limits
+LimitNOFILE=65536
+LimitMEMLOCK=infinity
+
+[Install]
+WantedBy=multi-user.target

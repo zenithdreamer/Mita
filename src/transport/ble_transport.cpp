@@ -26,11 +26,35 @@ void MitaBLECharacteristicCallbacks::onWrite(BLECharacteristic *characteristic)
     }
 }
 
+void MitaBLECharacteristicCallbacks::onNotify(BLECharacteristic *characteristic)
+{
+    // This gets called when notifications are sent
+}
+
+MitaBLEDescriptorCallbacks::MitaBLEDescriptorCallbacks(BLETransport *transport) : transport(transport) {}
+
+void MitaBLEDescriptorCallbacks::onWrite(BLEDescriptor *descriptor)
+{
+    uint8_t* value = descriptor->getValue();
+    if (value != nullptr)
+    {
+        // BLE2902 descriptor: 0x01 = notifications enabled, 0x00 = disabled
+        if (value[0] == 0x01)
+        {
+            transport->onNotificationsEnabled();
+        }
+        else if (value[0] == 0x00)
+        {
+            transport->onNotificationsDisabled();
+        }
+    }
+}
+
 // BLETransport implementation
 BLETransport::BLETransport(const String &device_id, const String &router_id)
     : device_id(device_id), router_id(router_id),
       server(nullptr), characteristic(nullptr),
-      ble_connected(false), client_connected(false),
+      ble_connected(false), client_connected(false), notifications_enabled(false),
       packet_length(0), packet_available(false)
 {
 }
@@ -70,7 +94,22 @@ bool BLETransport::connect()
         return false;
     }
 
-    delay(3000); // Wait for GATT setup
+    Serial.println("BLETransport: Client connected");
+
+    // Wait for router to enable notifications before considering connection ready
+    Serial.println("BLETransport: Waiting for notifications to be enabled...");
+    start_time = millis();
+    while (!notifications_enabled && (millis() - start_time) < 15000)
+    {
+        delay(100);
+    }
+
+    if (!notifications_enabled)
+    {
+        Serial.println("BLETransport: Router did not enable notifications");
+        return false;
+    }
+
     ble_connected = true;
     Serial.println("BLETransport: Connection successful");
     return true;
@@ -87,6 +126,7 @@ void BLETransport::disconnect()
     }
     ble_connected = false;
     client_connected = false;
+    notifications_enabled = false;
     Serial.println("BLETransport: Disconnected");
 }
 
@@ -168,7 +208,20 @@ void BLETransport::onClientConnect()
 void BLETransport::onClientDisconnect()
 {
     client_connected = false;
+    notifications_enabled = false;
     Serial.println("BLETransport: Client disconnected");
+}
+
+void BLETransport::onNotificationsEnabled()
+{
+    notifications_enabled = true;
+    Serial.println("BLETransport: Notifications enabled by router");
+}
+
+void BLETransport::onNotificationsDisabled()
+{
+    notifications_enabled = false;
+    Serial.println("BLETransport: Notifications disabled by router");
 }
 
 void BLETransport::onDataReceived(const uint8_t *data, size_t length)
@@ -198,7 +251,10 @@ bool BLETransport::setupServer()
             BLECharacteristic::PROPERTY_NOTIFY);
 
     characteristic->setCallbacks(new MitaBLECharacteristicCallbacks(this));
-    characteristic->addDescriptor(new BLE2902());
+
+    BLE2902* descriptor = new BLE2902();
+    descriptor->setCallbacks(new MitaBLEDescriptorCallbacks(this));
+    characteristic->addDescriptor(descriptor);
 
     service->start();
     return true;

@@ -7,6 +7,8 @@
 #include <thread>
 #include <atomic>
 #include <vector>
+#include <mutex>
+#include <condition_variable>
 
 // Forward declarations
 namespace mita
@@ -87,6 +89,10 @@ namespace mita
             std::atomic<bool> running_{false};
             std::unique_ptr<std::thread> main_loop_thread_;
             std::unique_ptr<std::thread> status_thread_;
+
+            // Thread synchro for shutdown
+            std::mutex shutdown_mutex_;
+            std::condition_variable shutdown_cv_;
 
             // Router startup time
             std::chrono::steady_clock::time_point start_time_;

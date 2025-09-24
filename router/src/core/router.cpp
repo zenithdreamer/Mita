@@ -126,16 +126,8 @@ namespace mita
 
             logger_->info("Stopping Mita Router...");
 
-            // Stop background threads
-            if (main_loop_thread_ && main_loop_thread_->joinable())
-            {
-                main_loop_thread_->join();
-            }
-
-            if (status_thread_ && status_thread_->joinable())
-            {
-                status_thread_->join();
-            }
+            //wake up the shutdown thread
+            shutdown_cv_.notify_all();
 
             // Stop all transports
             for (auto &[name, transport] : transports_)
@@ -166,7 +158,18 @@ namespace mita
                     logger_->error("Error stopping WiFi AP",
                                    LogContext().add("error", e.what()));
                 }
-            };
+            }
+
+            // Stop background threads
+            if (main_loop_thread_ && main_loop_thread_->joinable())
+            {
+                main_loop_thread_->join();
+            }
+
+            if (status_thread_ && status_thread_->joinable())
+            {
+                status_thread_->join();
+            }
 
             // Stop services
             if (device_management_)
@@ -443,7 +446,7 @@ namespace mita
         {
             logger_->info("Router main loop started");
 
-            try
+            try 
             {
                 while (running_)
                 {
@@ -451,13 +454,15 @@ namespace mita
                     periodic_maintenance();
 
                     // Sleep for cleanup interval
-                    std::this_thread::sleep_for(std::chrono::seconds(config_->routing.cleanup_interval));
+                    std::unique_lock<std::mutex> lock(shutdown_mutex_);
+                    shutdown_cv_.wait_for(lock, std::chrono::seconds(config_->routing.cleanup_interval),
+                                        [this] { return !running_; });
                 }
-            }
-            catch (const std::exception &e)
+
+            } catch (const std::exception &e)
             {
                 logger_->error("Error in main loop",
-                               LogContext().add("error", e.what()));
+                            LogContext().add("error", e.what()));
             }
 
             logger_->info("Router main loop stopped");
@@ -472,17 +477,19 @@ namespace mita
                 try
                 {
                     log_status();
-                    std::this_thread::sleep_for(std::chrono::seconds(config_->logging.status_interval));
+
+                    //sleep for status interval
+                    std::unique_lock<std::mutex> lock(shutdown_mutex_);
+                    shutdown_cv_.wait_for(lock, std::chrono::seconds(config_->logging.status_interval),
+                                        [this] { return !running_; });
                 }
-                catch (const std::exception &e)
-                {
+                catch(const std::exception& e)
+                 {
                     logger_->error("Error in status monitor",
                                    LogContext().add("error", e.what()));
                     std::this_thread::sleep_for(std::chrono::seconds(10)); // Wait before retrying
                 }
             }
-
-            logger_->debug("Status monitor stopped");
         }
 
         void MitaRouter::periodic_maintenance()

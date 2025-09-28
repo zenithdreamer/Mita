@@ -254,8 +254,38 @@ namespace mita
                     packet.set_encrypted(true);
                 }
 
-                // Forward through routing service
-                bool sent = routing_service_.forward_to_device(device->assigned_address, packet);
+                //validate routee
+                if (!routing_service_.forward_to_device(device->assigned_address, packet))
+                {
+                    logger_->warning("validation fail", core::LogContext().add("device_id", device_id).add("address", device->assigned_address));
+                    return false;
+                }
+
+                std::string handler_name = (device->transport_type == core::TransportType::WIFI) ? "wifi" : "ble";
+
+                bool sent = false;
+                {
+                    std::lock_guard<std::mutex> lock(handlers_mutex_);
+                    auto handler_it = message_handlers_.find(handler_name);
+                    if (handler_it != message_handlers_.end())
+                    {
+                        try
+                        {
+                            handler_it->second(device_id, packet);
+                            sent = true;
+                        }
+                        catch (const std::exception& e)
+                        {
+                            logger_->error("Transport handler failed",
+                                           core::LogContext().add("device_id", device_id).add("error", e.what()));
+                        }
+                    }
+                    else
+                    {
+                        logger_->warning("Transport handler not found",
+                                         core::LogContext().add("handler_name", handler_name));
+                    }
+                }
 
                 if (sent)
                 {
@@ -514,7 +544,34 @@ namespace mita
                                core::LogContext().add("device_id", device_id).add("length", payload.size()).add("hex", to_hex(payload)).add("preview", preview));
             }
 
-            // Forward to registered message handlers
+            //forwarding case
+            uint16_t dest_addr = packet.get_dest_addr();
+            if (dest_addr != 0 && dest_addr != 0xFFFF && dest_addr != device->assigned_address)
+            {
+
+                const auto* route = routing_service_.get_route(dest_addr);
+                if (route)
+                {
+
+                    if (send_message_to_device(route->device_id, payload))
+                    {
+                        logger_->debug("forward successfully", core::LogContext().add("from_device", device_id).add("to_device", route->device_id));
+                    }
+                    else
+                    {
+                        logger_->warning("failed to forward", core::LogContext().add("from_device", device_id).add("to_device", route->device_id));
+                        statistics_service_.record_protocol_error();
+                    }
+                }
+                else
+                {
+                    logger_->warning("No route found", core::LogContext().add("dest_addr", dest_addr));
+                    statistics_service_.record_protocol_error();
+                }
+
+                return;
+            }
+
             {
                 std::lock_guard<std::mutex> lock(handlers_mutex_);
                 for (const auto &[handler_name, handler] : message_handlers_)

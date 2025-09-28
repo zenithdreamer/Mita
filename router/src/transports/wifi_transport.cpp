@@ -457,6 +457,10 @@ namespace mita
                 // Start accept thread
                 accept_thread_ = std::make_unique<std::thread>(&WiFiTransport::accept_connections, this);
 
+                // Register message handler
+                device_management_.register_message_handler("wifi", [this](const std::string &device_id, const protocol::ProtocolPacket &packet)
+                                                            { send_packet(device_id, packet); });
+
                 logger_->info("WiFi transport started",
                               core::LogContext().add("host", config_.wifi.server_host).add("port", config_.wifi.server_port));
                 return true;

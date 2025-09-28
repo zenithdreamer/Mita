@@ -143,6 +143,7 @@ bool MitaClient::sendHeartbeat()
     return sendEncryptedMessage(ROUTER_ADDRESS, message);
 }
 
+//send data to router
 bool MitaClient::sendSensorData()
 {
     String sensor_data = generateSensorData();
@@ -150,6 +151,24 @@ bool MitaClient::sendSensorData()
     Serial.printf("MitaClient: Sending sensor data (%d bytes)\n", sensor_data.length());
     return sendEncryptedMessage(ROUTER_ADDRESS, sensor_data);
 }
+
+//test send data to another esp via router
+// bool MitaClient::sendSensorData()
+// {
+//     if (network_config.device_id != "ESP32_Sensor_001")
+//     {
+//         Serial.println("MitaClient: This device doesn't send sensor data");
+//         return true;
+//     }
+
+//     String sensor_data = generateSensorData();
+
+
+//     uint16_t target_address = 2;
+
+//     Serial.printf("MitaClient: Sending sensor data to ESP32_Sensor_002 (address 0x%04X) (%d bytes)\n", target_address, sensor_data.length());
+//     return sendEncryptedMessage(target_address, sensor_data);
+// }
 
 void MitaClient::setNetworkConfig(const NetworkConfig &config)
 {

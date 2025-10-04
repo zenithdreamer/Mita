@@ -44,6 +44,7 @@ public:
     void start();
     void stop();
     bool is_authenticated() const { return authenticated_; }
+    bool is_running() const { return running_; }
     const std::string& get_device_id() const { return device_id_; }
     uint16_t get_assigned_address() const { return assigned_address_; }
 

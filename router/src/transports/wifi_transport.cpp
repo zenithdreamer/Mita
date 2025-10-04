@@ -158,11 +158,11 @@ namespace mita
                 statistics_service_.record_transport_error("wifi");
             }
 
-            // Clean up device registration
-            if (!device_id_.empty())
-            {
-                device_management_.remove_device(device_id_);
-            }
+            // Clean up device registration comment because now it broke when do fast reconnect
+            // if (!device_id_.empty())
+            // {
+            //     device_management_.remove_device(device_id_);
+            // }
 
             cleanup();
         }
@@ -591,6 +591,9 @@ namespace mita
 
         void WiFiTransport::handle_new_client(int client_socket, const sockaddr_in &client_addr)
         {
+            // Periodically clean up disconnected clients
+            cleanup_disconnected_clients();
+
             // Check connection limit
             {
                 std::lock_guard<std::mutex> lock(clients_mutex_);
@@ -622,9 +625,6 @@ namespace mita
 
                 logger_->info("New WiFi client connected",
                               core::LogContext().add("client_address", temp_key));
-
-                // Periodically clean up disconnected clients
-                cleanup_disconnected_clients();
             }
             catch (const std::exception &e)
             {
@@ -639,15 +639,52 @@ namespace mita
         {
             std::lock_guard<std::mutex> lock(clients_mutex_);
 
+            int cleaned = 0;
             auto it = client_handlers_.begin();
             while (it != client_handlers_.end())
             {
-                if (!it->second->is_authenticated() && !it->second->get_device_id().empty())
+                if (!it->second->is_running())
                 {
-                    // Handler has device ID but is not authenticated - might be disconnected
-                    // TODO: This is a simplified check, need more sophisticated detection
+                    std::string device_id = it->second->get_device_id();
+
+                    logger_->debug("remove disconnect client",
+                                   core::LogContext().add("key", it->first).add("device_id", device_id));
+
+
+                    if (!device_id.empty())
+                    {
+
+                        bool device_owned_by_another = false;
+                        for (const auto &[other_key, other_handler] : client_handlers_)
+                        {
+                            if (other_key != it->first &&
+                                other_handler->get_device_id() == device_id &&
+                                other_handler->is_running())
+                            {
+                                device_owned_by_another = true;
+                                break;
+                            }
+                        }
+
+                        if (!device_owned_by_another)
+                        {
+                            device_management_.remove_device(device_id);
+                        }
+                    }
+
+                    it = client_handlers_.erase(it);
+                    cleaned++;
                 }
-                ++it;
+                else
+                {
+                    ++it;
+                }
+            }
+
+            if (cleaned > 0)
+            {
+                logger_->debug("clean up disconnected client",
+                               core::LogContext().add("cleaned_count", cleaned).add("remaining", client_handlers_.size()));
             }
         }
 

@@ -62,9 +62,26 @@ namespace mita
             auto it = managed_devices_.find(device_id);
             if (it != managed_devices_.end())
             {
-                logger_->warning("Device already registered",
-                                 core::LogContext().add("device_id", device_id).add("existing_state", static_cast<int>(it->second.state)));
-                return false;
+
+
+                //reuse existing device entry
+                it->second.state = DeviceState::CONNECTING;
+                it->second.transport_type = transport_type;
+                it->second.connected_time = std::chrono::steady_clock::now();
+                it->second.last_activity = std::chrono::steady_clock::now();
+                it->second.session_crypto.reset();
+
+
+                it->second.state = DeviceState::HANDSHAKING;
+
+                logger_->info("device reconnect",
+                              core::LogContext().add("device_id", device_id)
+                                  .add("address", it->second.assigned_address)
+                                  .add("transport_type", static_cast<int>(transport_type)));
+
+                statistics_service_.record_connection_established();
+                notify_device_connected(device_id);
+                return true;
             }
 
             // Create new managed device

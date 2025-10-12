@@ -3,6 +3,7 @@
 
 #include "core/transport_interface.hpp"
 #include "protocol/protocol.hpp"
+#include "transports/wifi_client_handler.hpp"
 #include <thread>
 #include <atomic>
 #include <map>
@@ -29,61 +30,6 @@ namespace mita {
 namespace transports {
 
 /**
- * WiFi client connection handler
- * Manages individual client connections and handshakes
- */
-class WiFiClientHandler {
-public:
-    WiFiClientHandler(int client_socket, const sockaddr_in& client_addr,
-                     const core::RouterConfig& config,
-                     services::RoutingService& routing_service,
-                     services::DeviceManagementService& device_management,
-                     services::StatisticsService& statistics_service);
-    ~WiFiClientHandler();
-
-    void start();
-    void stop();
-    bool is_authenticated() const { return authenticated_; }
-    bool is_running() const { return running_; }
-    const std::string& get_device_id() const { return device_id_; }
-    uint16_t get_assigned_address() const { return assigned_address_; }
-
-    // Packet transmission
-    bool send_packet(const protocol::ProtocolPacket& packet);
-
-private:
-    void handle_client();
-    bool receive_packet(protocol::ProtocolPacket& packet, int timeout_ms = 5000);
-    void handle_handshake_packet(const protocol::ProtocolPacket& packet);
-    void handle_data_packet(const protocol::ProtocolPacket& packet);
-    void cleanup();
-
-    // Network
-    int client_socket_;
-    sockaddr_in client_addr_;
-    std::string client_address_str_;
-
-    // Configuration and services
-    const core::RouterConfig& config_;
-    services::RoutingService& routing_service_;
-    services::DeviceManagementService& device_management_;
-    services::StatisticsService& statistics_service_;
-
-    // Client state
-    std::string device_id_;
-    uint16_t assigned_address_;
-    std::unique_ptr<protocol::PacketCrypto> session_crypto_;
-    std::unique_ptr<protocol::HandshakeManager> handshake_manager_;
-    bool authenticated_;
-    std::atomic<bool> running_;
-
-    // Threading
-    std::unique_ptr<std::thread> handler_thread_;
-
-    std::shared_ptr<core::Logger> logger_;
-};
-
-/**
  * WiFi transport implementation using TCP sockets
  * Handles WiFi Access Point and client connections
  */
@@ -108,7 +54,7 @@ private:
     void handle_new_client(int client_socket, const sockaddr_in& client_addr);
     void cleanup_disconnected_clients();
     WiFiClientHandler* find_client_handler(const std::string& device_id);
-
+    bool receive_hello_packet(int socket, protocol::ProtocolPacket& packet, int timeout_ms);
     // Server socket
     int server_socket_;
     sockaddr_in server_addr_;

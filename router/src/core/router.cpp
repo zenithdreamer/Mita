@@ -5,7 +5,7 @@
 #include "services/statistics_service.hpp"
 #include "services/device_management_service.hpp"
 #include "transports/wifi_transport.hpp"
-#include "transports/ble_transport.hpp"
+#include "transports/ble/ble_transport.hpp"
 #include "infrastructure/wifi_manager.hpp"
 #include <thread>
 #include <chrono>
@@ -405,7 +405,8 @@ namespace mita
             {
                 logger_->info("Setting up BLE transport...");
 
-                auto ble_transport = std::make_unique<transports::BLETransport>(
+                // use new BLE transport
+                auto ble_transport = std::make_unique<transports::ble::BLETransport>(
                     *config_, *routing_service_, *device_management_, *statistics_service_);
 
                 if (ble_transport->start())

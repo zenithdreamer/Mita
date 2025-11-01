@@ -731,16 +731,11 @@ namespace mita
             logger_->debug("[BLE SCAN] handle_device_found called", core::LogContext{}.add("address", device_address).add("name", device_name));
             // NOTE: devices_mutex_ is already held by calling function (handle_device_discovery)
 
-            // Check if device name contains our router ID (case-insensitive)
-            std::string lowercase_name = device_name;
-            std::string lowercase_router_id = config_.router_id;
-            std::transform(lowercase_name.begin(), lowercase_name.end(), lowercase_name.begin(), ::tolower);
-            std::transform(lowercase_router_id.begin(), lowercase_router_id.end(), lowercase_router_id.begin(), ::tolower);
-
-            if (lowercase_name.find(lowercase_router_id) == std::string::npos)
+            // Check if device advertises our BLE service UUID
+            if (!device_has_service(device_address, config_.ble.service_uuid))
             {
-                logger_->debug("Device name does not contain router ID",
-                               core::LogContext{}.add("device_name", device_name).add("router_id", config_.router_id));
+                logger_->debug("Device does not advertise required service UUID",
+                               core::LogContext{}.add("device_address", device_address).add("required_uuid", config_.ble.service_uuid));
                 return;
             }
 
@@ -954,6 +949,14 @@ namespace mita
                     return pair.first;
             }
             return device_id; // fallback
+        }
+
+        bool BLETransport::device_has_service(const std::string &device_address, const std::string &service_uuid)
+        {
+            if (!backend_)
+                return false;
+
+            return backend_->has_service(device_address, service_uuid);
         }
 
     } // namespace transports

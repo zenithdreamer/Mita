@@ -38,6 +38,7 @@ namespace mita
             virtual bool enable_notifications(const std::string &address, const std::string &service_uuid,
                                               const std::string &char_uuid,
                                               std::function<void(const std::string &, const std::vector<uint8_t> &)> cb) = 0;
+            virtual bool has_service(const std::string &address, const std::string &service_uuid) = 0;
         };
 
         // Factory

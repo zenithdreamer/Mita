@@ -120,6 +120,7 @@ namespace mita
             void cleanup_disconnected_devices();
             BLEDeviceHandler *find_device_handler(const std::string &device_id);
             std::string device_address_from_id(const std::string &device_id) const;
+            bool device_has_service(const std::string &device_address, const std::string &service_uuid);
 
             // Adapter / discovery management
             bool initialize_adapter();

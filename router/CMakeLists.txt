@@ -55,7 +55,8 @@ file(GLOB_RECURSE PROTOCOL_SOURCES "src/protocol/*.cpp")
 set(TRANSPORT_SOURCES "")
 file(GLOB WIFI_SOURCES "src/transports/wifi_*.cpp")
 list(APPEND TRANSPORT_SOURCES ${WIFI_SOURCES})
-file(GLOB BLE_SOURCES "src/transports/ble_simplebluez_backend.cpp" "src/transports/ble_transport.cpp")
+# New BLE sources from ble/ subdirectory
+file(GLOB_RECURSE BLE_SOURCES "src/transports/ble/*.cpp")
 list(APPEND TRANSPORT_SOURCES ${BLE_SOURCES})
 add_definitions(-DUSE_SIMPLEBLUEZ)
 

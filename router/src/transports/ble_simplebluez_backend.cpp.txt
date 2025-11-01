@@ -306,6 +306,51 @@ namespace mita
                 }
             }
 
+            bool has_service(const std::string &address, const std::string &service_uuid) override
+            {
+                auto dev = get_or_refresh_peripheral(address);
+                if (!dev.has_value())
+                {
+                    if (logger_)
+                        logger_->debug("Device not found in scan results", core::LogContext{}.add("address", address));
+                    return false;
+                }
+
+                try
+                {
+                    // Get advertised services (works even when not connected)
+                    auto services = dev->services();
+
+                    for (auto &service : services)
+                    {
+                        if (logger_)
+
+                            if (service.uuid() == service_uuid)
+                                {
+                                if (logger_)
+                                    logger_->info("Device HAS required service - MATCH!", core::LogContext{}
+                                    .add("address", address)
+                                    .add("service_uuid", service_uuid));
+                                    return true;
+                                }
+                    }
+
+                    if (logger_)
+                        logger_->info("Device does NOT have required service", core::LogContext{}
+                            .add("address", address)
+                            .add("required_uuid", service_uuid));
+                    return false;
+                }
+                catch (const std::exception &e)
+                {
+                    if (logger_)
+                        logger_->warning("Exception checking services", core::LogContext{}
+                            .add("address", address)
+                            .add("error", e.what()));
+                    return false;
+                }
+            }
+
         private:
             std::optional<SimpleBLE::Peripheral> get_or_refresh_peripheral(const std::string &address)
             {

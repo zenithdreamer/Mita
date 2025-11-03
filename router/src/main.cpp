@@ -14,6 +14,7 @@
 #include "core/router.hpp"
 #include "core/config.hpp"
 #include "core/logger.hpp"
+#include "api/server.hpp"
 
 // Command line argument parsing
 #include <getopt.h>
@@ -26,12 +27,21 @@ namespace mita {
 std::unique_ptr<core::MitaRouter> g_router;
 
 /**
+ * Global API server instance
+ */
+std::unique_ptr<ApiServer> g_apiServer;
+
+/**
  * Signal handler for graceful shutdown
  */
 void signal_handler(int signum) {
     auto logger = core::get_logger("main");
     logger->info("Received signal, shutting down gracefully...",
                 core::LogContext().add("signal", signum));
+
+    if (g_apiServer) {
+        g_apiServer->stop();
+    }
 
     if (g_router) {
         g_router->stop();
@@ -314,6 +324,11 @@ int main(int argc, char* argv[]) {
             logger->error("Failed to start router");
             return 1;
         }
+
+        // Start HTTP API server
+        logger->info("Starting HTTP API server...");
+        g_apiServer = std::make_unique<ApiServer>();
+        g_apiServer->start("0.0.0.0", 8080);
 
         // Router runs until stopped by signal
         logger->info("Router started successfully");

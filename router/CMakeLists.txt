@@ -69,6 +69,40 @@ FetchContent_Declare(simpleble
 )
 FetchContent_MakeAvailable(simpleble)
 
+# Disable oatpp tests to speed up build and reduce warnings
+option(OATPP_BUILD_TESTS "Build oatpp tests" OFF)
+
+# Force oatpp modules to use CUSTOM location (not INSTALLED)
+# This prevents oatpp-swagger from trying to find_package(oatpp)
+set(OATPP_MODULES_LOCATION "CUSTOM" CACHE STRING "" FORCE)
+
+# Fetch oatpp
+FetchContent_Declare(
+    oatpp
+    GIT_REPOSITORY https://github.com/oatpp/oatpp.git
+    GIT_TAG 1.3.0
+)
+
+# Make oatpp available first - this builds oatpp
+FetchContent_MakeAvailable(oatpp)
+
+# Set paths for CUSTOM mode - tell oatpp-swagger where to find oatpp
+set(OATPP_DIR_SRC "${oatpp_SOURCE_DIR}/src" CACHE STRING "" FORCE)
+set(OATPP_DIR_LIB "${oatpp_BINARY_DIR}/src" CACHE STRING "" FORCE)
+
+# Fetch oatpp-swagger (depends on oatpp being available)
+FetchContent_Declare(
+    oatpp-swagger
+    GIT_REPOSITORY https://github.com/oatpp/oatpp-swagger.git
+    GIT_TAG 1.3.0
+)
+
+# Make oatpp-swagger available after oatpp is ready
+FetchContent_MakeAvailable(oatpp-swagger)
+
+# Define swagger resource path
+add_definitions(-DOATPP_SWAGGER_RES_PATH="${oatpp-swagger_SOURCE_DIR}/res")
+
 # Main executable
 add_executable(mita_router
     src/main.cpp
@@ -96,6 +130,8 @@ target_link_libraries(mita_router
     OpenSSL::SSL
     OpenSSL::Crypto
     fmt::fmt
+    oatpp
+    oatpp-swagger
 )
 
 # WiFi-specific libraries

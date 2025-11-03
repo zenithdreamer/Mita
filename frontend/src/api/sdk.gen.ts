@@ -2,7 +2,7 @@
 
 import type { Client, Options as Options2, TDataShape } from './client';
 import { client } from './client.gen';
-import type { GetStatusData, GetStatusResponses, OptionsData, OptionsResponses } from './types.gen';
+import type { ClearPacketsData, ClearPacketsResponses, GetPacketsData, GetPacketsResponses, GetStatusData, GetStatusResponses, OptionsData, OptionsResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean> = Options2<TData, ThrowOnError> & {
     /**
@@ -26,6 +26,28 @@ export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends 
 export const getStatus = <ThrowOnError extends boolean = false>(options?: Options<GetStatusData, ThrowOnError>) => {
     return (options?.client ?? client).get<GetStatusResponses, unknown, ThrowOnError>({
         url: '/api/status',
+        ...options
+    });
+};
+
+/**
+ * Clear all captured packets
+ */
+export const clearPackets = <ThrowOnError extends boolean = false>(options?: Options<ClearPacketsData, ThrowOnError>) => {
+    return (options?.client ?? client).delete<ClearPacketsResponses, unknown, ThrowOnError>({
+        url: '/api/packets',
+        ...options
+    });
+};
+
+/**
+ * Get captured packets
+ *
+ * Returns list of captured packets for monitoring
+ */
+export const getPackets = <ThrowOnError extends boolean = false>(options: Options<GetPacketsData, ThrowOnError>) => {
+    return (options.client ?? client).get<GetPacketsResponses, unknown, ThrowOnError>({
+        url: '/api/packets',
         ...options
     });
 };

@@ -21,6 +21,7 @@ namespace mita
     {
         class RoutingService;
         class StatisticsService;
+        class PacketMonitorService;
     }
 }
 
@@ -120,6 +121,9 @@ namespace mita
             void notify_device_connected(const std::string &device_id);
             void notify_device_disconnected(const std::string &device_id);
 
+            // Packet monitoring
+            void set_packet_monitor(std::shared_ptr<PacketMonitorService> monitor) { packet_monitor_ = monitor; }
+
         private:
             // Internal packet processing
             void process_hello_packet(const std::string &device_id, const protocol::ProtocolPacket &packet);
@@ -144,6 +148,10 @@ namespace mita
 
             // Service state
             std::atomic<bool> running_{false};
+
+            // Packet monitoring
+            std::shared_ptr<PacketMonitorService> packet_monitor_;
+            
             std::shared_ptr<core::Logger> logger_;
         };
 

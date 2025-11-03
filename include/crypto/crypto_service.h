@@ -30,6 +30,7 @@ public:
     bool deriveSessionKey(const String &shared_secret, uint32_t nonce1, uint32_t nonce2);
     bool hasValidSessionKey() const;
     void clearSessionKey();
+    void getSessionKey(uint8_t *key_out) const;  // Get copy of session key for logging
 
     // Encryption/Decryption
     bool encryptPayload(const uint8_t *plaintext, size_t plaintext_len,

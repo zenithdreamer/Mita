@@ -366,6 +366,21 @@ bool MitaClient::receiveAuthAck()
         return false;
     }
 
+    // Log session key for debugging/decryption purposes
+    uint8_t session_key_bytes[SESSION_KEY_SIZE];
+    crypto_service.getSessionKey(session_key_bytes);
+    
+    Serial.println("MitaClient: ========================================");
+    Serial.println("MitaClient: SESSION KEY");
+    Serial.print("MitaClient: ");
+    for (int i = 0; i < SESSION_KEY_SIZE; i++)
+    {
+        if (session_key_bytes[i] < 0x10) Serial.print("0");
+        Serial.print(session_key_bytes[i], HEX);
+    }
+    Serial.println();
+    Serial.println("MitaClient: ========================================");
+
     Serial.printf("MitaClient: AUTH_ACK received, assigned address: 0x%04X\n", assigned_address);
     return true;
 }

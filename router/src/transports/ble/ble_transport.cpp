@@ -18,10 +18,12 @@ namespace mita
                 const core::RouterConfig &config,
                 services::RoutingService &routing_service,
                 services::DeviceManagementService &device_management,
-                services::StatisticsService &statistics_service)
+                services::StatisticsService &statistics_service,
+                std::shared_ptr<services::PacketMonitorService> packet_monitor)
                 : BaseTransport(config, routing_service, device_management, statistics_service),
                   event_queue_(1000), // queue max size
-                  logger_(core::get_logger("BLETransport"))
+                  logger_(core::get_logger("BLETransport")),
+                  packet_monitor_(packet_monitor)
             {
                 logger_->info("BLE transport created",
                              core::LogContext{}
@@ -432,7 +434,8 @@ namespace mita
                     config_,
                     routing_service_,
                     device_management_,
-                    statistics_service_);
+                    statistics_service_,
+                    packet_monitor_);
 
 
                 if (!handler->connect())

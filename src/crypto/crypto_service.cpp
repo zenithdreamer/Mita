@@ -88,6 +88,14 @@ void CryptoService::clearSessionKey()
     iv_counter = 0;
 }
 
+void CryptoService::getSessionKey(uint8_t *key_out) const
+{
+    if (session_key_valid && key_out)
+    {
+        memcpy(key_out, session_key, SESSION_KEY_SIZE);
+    }
+}
+
 bool CryptoService::encryptPayload(const uint8_t *plaintext, size_t plaintext_len,
                                    uint8_t *ciphertext, size_t &ciphertext_len)
 {

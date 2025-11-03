@@ -327,7 +327,7 @@ int main(int argc, char* argv[]) {
 
         // Start HTTP API server
         logger->info("Starting HTTP API server...");
-        g_apiServer = std::make_unique<ApiServer>();
+        g_apiServer = std::make_unique<ApiServer>(g_router->get_packet_monitor());
         g_apiServer->start("0.0.0.0", 8080);
 
         // Router runs until stopped by signal

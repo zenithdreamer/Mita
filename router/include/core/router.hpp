@@ -24,6 +24,7 @@ namespace mita
         class RoutingService;
         class StatisticsService;
         class DeviceManagementService;
+        class PacketMonitorService;
     }
     namespace infrastructure
     {
@@ -57,6 +58,9 @@ namespace mita
             std::map<std::string, std::map<std::string, std::string>> get_connected_devices();
             std::map<std::string, uint64_t> get_statistics();
             std::map<std::string, std::string> get_router_info();
+            
+            // Packet monitoring
+            std::shared_ptr<services::PacketMonitorService> get_packet_monitor() const { return packet_monitor_; }
 
         private:
             // Setup methods
@@ -78,6 +82,7 @@ namespace mita
             std::unique_ptr<services::RoutingService> routing_service_;
             std::unique_ptr<services::StatisticsService> statistics_service_;
             std::unique_ptr<services::DeviceManagementService> device_management_;
+            std::shared_ptr<services::PacketMonitorService> packet_monitor_;
 
             // Transport layers
             std::map<std::string, std::unique_ptr<TransportInterface>> transports_;

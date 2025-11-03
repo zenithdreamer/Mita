@@ -16,6 +16,11 @@
 
 namespace mita
 {
+    namespace services
+    {
+        class PacketMonitorService;
+    }
+
     namespace transports
     {
         namespace ble
@@ -28,7 +33,8 @@ namespace mita
                     const core::RouterConfig &config,
                     services::RoutingService &routing_service,
                     services::DeviceManagementService &device_management,
-                    services::StatisticsService &statistics_service);
+                    services::StatisticsService &statistics_service,
+                    std::shared_ptr<services::PacketMonitorService> packet_monitor = nullptr);
 
                 ~BLETransport();
 
@@ -66,6 +72,7 @@ namespace mita
                 std::mutex seen_devices_mutex_;
 
                 std::shared_ptr<core::Logger> logger_;
+                std::shared_ptr<services::PacketMonitorService> packet_monitor_;
             };
 
         } // namespace ble

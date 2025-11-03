@@ -22,6 +22,7 @@ namespace mita
 
     namespace services
     {
+        class PacketMonitorService;
 
         /**
          * Routing table entry for a device
@@ -93,6 +94,9 @@ namespace mita
             size_t get_device_count() const;
             std::vector<std::string> get_connected_device_ids() const;
 
+            // Packet monitoring
+            void set_packet_monitor(std::shared_ptr<PacketMonitorService> monitor) { packet_monitor_ = monitor; }
+
         private:
             // Address management
             uint16_t find_free_address();
@@ -119,6 +123,9 @@ namespace mita
             uint16_t next_address_;
 
             std::atomic<bool> running_{false};
+            
+            // Packet monitoring
+            std::shared_ptr<PacketMonitorService> packet_monitor_;
         };
 
     } // namespace services

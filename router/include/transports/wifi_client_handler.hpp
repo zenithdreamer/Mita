@@ -22,6 +22,7 @@ namespace services {
 class RoutingService;
 class DeviceManagementService;
 class StatisticsService;
+class PacketMonitorService;
 }
 }
 
@@ -38,7 +39,8 @@ public:
                      const core::RouterConfig& config,
                      services::RoutingService& routing_service,
                      services::DeviceManagementService& device_management,
-                     services::StatisticsService& statistics_service);
+                     services::StatisticsService& statistics_service,
+                     std::shared_ptr<services::PacketMonitorService> packet_monitor = nullptr);
     ~WiFiClientHandler();
 
     void start(std::optional<protocol::ProtocolPacket> initial_hello = std::nullopt);
@@ -71,6 +73,7 @@ private:
     services::RoutingService& routing_service_;
     services::DeviceManagementService& device_management_;
     services::StatisticsService& statistics_service_;
+    std::shared_ptr<services::PacketMonitorService> packet_monitor_;
 
     // Client state
     std::string device_id_;

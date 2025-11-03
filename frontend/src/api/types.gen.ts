@@ -4,10 +4,30 @@ export type ClientOptions = {
     baseUrl: 'http://localhost:8080' | (string & {});
 };
 
+export type PacketInfoDto = {
+    id?: string;
+    timestamp?: number;
+    direction?: string;
+    sourceAddr?: string;
+    destAddr?: string;
+    messageType?: string;
+    payloadSize?: number;
+    transport?: string;
+    encrypted?: boolean;
+    rawData?: string;
+    decodedHeader?: string;
+    decodedPayload?: string;
+};
+
 export type StatusDto = {
     status: string;
     message: string;
     uptime: number;
+};
+
+export type PacketListDto = {
+    packets?: Array<PacketInfoDto>;
+    total?: number;
 };
 
 export type GetStatusData = {
@@ -25,6 +45,47 @@ export type GetStatusResponses = {
 };
 
 export type GetStatusResponse = GetStatusResponses[keyof GetStatusResponses];
+
+export type ClearPacketsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/packets';
+};
+
+export type ClearPacketsResponses = {
+    /**
+     * OK
+     */
+    200: StatusDto;
+};
+
+export type ClearPacketsResponse = ClearPacketsResponses[keyof ClearPacketsResponses];
+
+export type GetPacketsData = {
+    body?: never;
+    path?: never;
+    query: {
+        /**
+         * Maximum number of packets to return
+         */
+        limit: number;
+        /**
+         * Offset for pagination
+         */
+        offset: number;
+    };
+    url: '/api/packets';
+};
+
+export type GetPacketsResponses = {
+    /**
+     * OK
+     */
+    200: PacketListDto;
+};
+
+export type GetPacketsResponse = GetPacketsResponses[keyof GetPacketsResponses];
 
 export type OptionsData = {
     body?: never;

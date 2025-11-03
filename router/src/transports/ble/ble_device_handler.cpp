@@ -1,6 +1,7 @@
 #include "transports/ble/ble_device_handler.hpp"
 #include "core/config.hpp"
 #include "core/logger.hpp"
+#include "services/packet_monitor_service.hpp"
 
 namespace mita
 {
@@ -15,7 +16,8 @@ namespace mita
                 const core::RouterConfig &config,
                 services::RoutingService &routing_service,
                 services::DeviceManagementService &device_management,
-                services::StatisticsService &statistics_service)
+                services::StatisticsService &statistics_service,
+                std::shared_ptr<services::PacketMonitorService> packet_monitor)
                 : config_(config),
                   routing_service_(routing_service),
                   device_management_(device_management),
@@ -25,7 +27,8 @@ namespace mita
                   assigned_address_(0),
                   connected_(false),
                   authenticated_(false),
-                  logger_(core::get_logger("BLEDeviceHandler"))
+                  logger_(core::get_logger("BLEDeviceHandler")),
+                  packet_monitor_(packet_monitor)
             {
                 // Initialize handshake manager
                 handshake_manager_ = std::make_unique<protocol::HandshakeManager>(
@@ -114,6 +117,12 @@ namespace mita
                     {
                         logger_->debug("BLE packet sent successfully",
                                       core::LogContext{}.add("device_address", device_address_));
+                        
+                        // Capture outbound packet
+                        if (packet_monitor_)
+                        {
+                            packet_monitor_->capture_packet(outgoing_packet, "outbound", core::TransportType::BLE);
+                        }
                     }
                     else
                     {
@@ -158,6 +167,12 @@ namespace mita
                                       .add("source_addr", parsed_packet->get_source_addr())
                                       .add("dest_addr", parsed_packet->get_dest_addr())
                                       .add("encrypted", parsed_packet->is_encrypted()));
+
+                    // Capture inbound packet
+                    if (packet_monitor_)
+                    {
+                        packet_monitor_->capture_packet(*parsed_packet, "inbound", core::TransportType::BLE);
+                    }
 
 
                     if (parsed_packet->get_message_type() == MessageType::HELLO ||

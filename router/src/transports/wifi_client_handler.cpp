@@ -4,6 +4,7 @@
 #include "services/routing_service.hpp"
 #include "services/device_management_service.hpp"
 #include "services/statistics_service.hpp"
+#include "services/packet_monitor_service.hpp"
 
 #include <unistd.h>
 #include <arpa/inet.h>
@@ -22,8 +23,9 @@ namespace mita
                                              const core::RouterConfig &config,
                                              services::RoutingService &routing_service,
                                              services::DeviceManagementService &device_management,
-                                             services::StatisticsService &statistics_service)
-            : client_socket_(client_socket), client_addr_(client_addr), config_(config), routing_service_(routing_service), device_management_(device_management), statistics_service_(statistics_service), assigned_address_(0), authenticated_(false), running_(false), logger_(core::get_logger("WiFiClientHandler"))
+                                             services::StatisticsService &statistics_service,
+                                             std::shared_ptr<services::PacketMonitorService> packet_monitor)
+            : client_socket_(client_socket), client_addr_(client_addr), config_(config), routing_service_(routing_service), device_management_(device_management), statistics_service_(statistics_service), packet_monitor_(packet_monitor), assigned_address_(0), authenticated_(false), running_(false), logger_(core::get_logger("WiFiClientHandler"))
         {
 
             // Convert client address to string
@@ -126,6 +128,12 @@ namespace mita
 
             try
             {
+                // Capture outbound packet for monitoring (handshake or data)
+                if (packet_monitor_)
+                {
+                    packet_monitor_->capture_packet(packet, "outbound", core::TransportType::WIFI);
+                }
+
                 auto packet_data = packet.to_bytes();
 
                 // Send packet data directly (no size prefix)
@@ -244,8 +252,8 @@ namespace mita
                     return false; // Timeout or error
                 }
 
-                // Read header first (8 bytes)
-                const size_t header_size = 8; // HEADER_SIZE from protocol
+                // Read header first (16 bytes)
+                const size_t header_size = 16; // HEADER_SIZE from protocol
                 std::vector<uint8_t> header_data(header_size);
                 ssize_t received = recv(client_socket_, header_data.data(), header_size, MSG_WAITALL);
                 if (received != static_cast<ssize_t>(header_size))
@@ -283,6 +291,13 @@ namespace mita
                 }
 
                 packet = *parsed_packet;
+                
+                // Capture incoming packet for monitoring (handshake or data)
+                if (packet_monitor_)
+                {
+                    packet_monitor_->capture_packet(packet, "inbound", core::TransportType::WIFI);
+                }
+
                 statistics_service_.record_transport_packet_received("wifi", packet_data.size());
                 return true;
             }

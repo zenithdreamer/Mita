@@ -8,6 +8,7 @@
 #include "oatpp-swagger/Controller.hpp"
 #include "oatpp-swagger/Resources.hpp"
 #include "api/controller.hpp"
+#include "services/packet_monitor_service.hpp"
 #include <memory>
 #include <thread>
 #include <chrono>
@@ -20,10 +21,12 @@ private:
   std::shared_ptr<oatpp::web::server::HttpConnectionHandler> m_connectionHandler;
   std::vector<std::thread> m_workerThreads;
   std::atomic<bool> m_running;
+  std::shared_ptr<mita::services::PacketMonitorService> m_packetMonitor;
   static constexpr size_t NUM_WORKER_THREADS = 4;
 
 public:
-  ApiServer() : m_running(false) {}
+  ApiServer(std::shared_ptr<mita::services::PacketMonitorService> packetMonitor = nullptr) 
+    : m_running(false), m_packetMonitor(packetMonitor) {}
 
   ~ApiServer() {
     stop();
@@ -40,8 +43,8 @@ public:
     // Create Router
     auto router = oatpp::web::server::HttpRouter::createShared();
 
-    // Create API Controller
-    auto apiController = std::make_shared<RouterApiController>(objectMapper);
+    // Create API Controller with packet monitor
+    auto apiController = std::make_shared<RouterApiController>(objectMapper, m_packetMonitor);
     router->addController(apiController);
 
     // Create Swagger documentation info

@@ -1,6 +1,7 @@
 #include "services/device_management_service.hpp"
 #include "services/routing_service.hpp"
 #include "services/statistics_service.hpp"
+#include "services/packet_monitor_service.hpp"
 #include "core/logger.hpp"
 
 namespace mita
@@ -10,7 +11,7 @@ namespace mita
 
         DeviceManagementService::DeviceManagementService(RoutingService &routing_service,
                                                          StatisticsService &statistics_service)
-            : routing_service_(routing_service), statistics_service_(statistics_service), logger_(core::get_logger("DeviceManagementService"))
+            : routing_service_(routing_service), statistics_service_(statistics_service), packet_monitor_(nullptr), logger_(core::get_logger("DeviceManagementService"))
         {
 
             logger_->info("Device management service initialized");
@@ -202,6 +203,12 @@ namespace mita
 
             try
             {
+                // Capture incoming packet for monitoring
+                if (packet_monitor_)
+                {
+                    packet_monitor_->capture_packet(packet, "inbound", transport_type);
+                }
+
                 update_device_activity(device_id);
 
                 // Process packet based on message type
@@ -268,6 +275,13 @@ namespace mita
                 {
                     auto encrypted_payload = device->session_crypto->encrypt(message);
                     packet.set_payload(encrypted_payload);
+                    packet.set_encrypted(true);
+                }
+
+                // Capture outbound packet for monitoring
+                if (packet_monitor_)
+                {
+                    packet_monitor_->capture_packet(packet, "outbound", device->transport_type);
                     packet.set_encrypted(true);
                 }
 

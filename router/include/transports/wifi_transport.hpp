@@ -23,6 +23,7 @@ namespace services {
 class RoutingService;
 class DeviceManagementService;
 class StatisticsService;
+class PacketMonitorService;
 }
 }
 
@@ -38,7 +39,8 @@ public:
     WiFiTransport(const core::RouterConfig& config,
                  services::RoutingService& routing_service,
                  services::DeviceManagementService& device_management,
-                 services::StatisticsService& statistics_service);
+                 services::StatisticsService& statistics_service,
+                 std::shared_ptr<services::PacketMonitorService> packet_monitor = nullptr);
     ~WiFiTransport();
 
     // TransportInterface implementation
@@ -67,6 +69,7 @@ private:
     std::unique_ptr<std::thread> accept_thread_;
 
     std::shared_ptr<core::Logger> logger_;
+    std::shared_ptr<services::PacketMonitorService> packet_monitor_;
 };
 
 } // namespace transports

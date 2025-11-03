@@ -22,7 +22,7 @@ export function RoutingTable({ data }: RoutingTableProps) {
             </div>
 
             {data.map((device) => (
-                <RoutedDevice id={device.id} name={device.name} type={device.type} status={device.status} lastseen={device.lastseen} />
+                <RoutedDevice key={device.id} id={device.id} name={device.name} type={device.type} status={device.status} lastseen={device.lastseen} />
             ))}
         </div>
     );

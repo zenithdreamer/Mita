@@ -1,4 +1,5 @@
 #include "services/routing_service.hpp"
+#include "services/packet_monitor_service.hpp"
 #include "core/config.hpp"
 #include "core/logger.hpp"
 #include "protocol/protocol.hpp"
@@ -11,7 +12,7 @@ namespace mita
     {
 
         RoutingService::RoutingService(const core::RoutingConfig &config)
-            : config_(config), logger_(core::get_logger("RoutingService")), next_address_(MIN_CLIENT_ADDRESS)
+            : config_(config), logger_(core::get_logger("RoutingService")), next_address_(MIN_CLIENT_ADDRESS), packet_monitor_(nullptr)
         {
 
             logger_->info("Routing service initialized",
@@ -247,6 +248,31 @@ namespace mita
         bool RoutingService::route_packet(const protocol::ProtocolPacket &packet)
         {
             uint16_t dest_address = packet.get_dest_addr();
+
+            // Capture packet for monitoring
+            if (packet_monitor_)
+            {
+                // Determine direction based on source/destination
+                std::string direction = "forwarded";
+                if (packet.get_source_addr() == ROUTER_ADDRESS)
+                {
+                    direction = "outbound";
+                }
+                else if (dest_address == ROUTER_ADDRESS)
+                {
+                    direction = "inbound";
+                }
+
+                // Get transport type from route (default to WiFi if unknown)
+                core::TransportType transport = core::TransportType::WIFI;
+                const RouteEntry *route = get_route(packet.get_source_addr());
+                if (route)
+                {
+                    transport = route->interface_type;
+                }
+
+                packet_monitor_->capture_packet(packet, direction, transport);
+            }
 
             if (dest_address == BROADCAST_ADDRESS)
             {

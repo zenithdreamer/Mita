@@ -4,6 +4,7 @@
 #include "services/routing_service.hpp"
 #include "services/statistics_service.hpp"
 #include "services/device_management_service.hpp"
+#include "services/packet_monitor_service.hpp"
 #include "transports/wifi_transport.hpp"
 #include "transports/ble/ble_transport.hpp"
 #include "infrastructure/wifi_manager.hpp"
@@ -49,6 +50,11 @@ namespace mita
                 statistics_service_ = std::make_unique<services::StatisticsService>();
                 device_management_ = std::make_unique<services::DeviceManagementService>(
                     *routing_service_, *statistics_service_);
+                packet_monitor_ = std::make_shared<services::PacketMonitorService>(1000); // Keep last 1000 packets
+
+                // Connect packet monitor to services
+                routing_service_->set_packet_monitor(packet_monitor_);
+                device_management_->set_packet_monitor(packet_monitor_);
 
                 // Start services
                 routing_service_->start();
@@ -356,9 +362,9 @@ namespace mita
                     logger_->info("Skipping WiFi AP setup (development mode)");
                 }
 
-                // Initialize WiFi transport
+                // Initialize WiFi transport with packet monitor
                 auto wifi_transport = std::make_unique<transports::WiFiTransport>(
-                    *config_, *routing_service_, *device_management_, *statistics_service_);
+                    *config_, *routing_service_, *device_management_, *statistics_service_, packet_monitor_);
 
                 if (wifi_transport->start())
                 {
@@ -405,9 +411,9 @@ namespace mita
             {
                 logger_->info("Setting up BLE transport...");
 
-                // use new BLE transport
+                // use new BLE transport with packet monitor
                 auto ble_transport = std::make_unique<transports::ble::BLETransport>(
-                    *config_, *routing_service_, *device_management_, *statistics_service_);
+                    *config_, *routing_service_, *device_management_, *statistics_service_, packet_monitor_);
 
                 if (ble_transport->start())
                 {

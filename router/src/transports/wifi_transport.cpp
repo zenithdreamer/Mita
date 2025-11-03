@@ -23,8 +23,9 @@ namespace mita
         WiFiTransport::WiFiTransport(const core::RouterConfig &config,
                                      services::RoutingService &routing_service,
                                      services::DeviceManagementService &device_management,
-                                     services::StatisticsService &statistics_service)
-            : BaseTransport(config, routing_service, device_management, statistics_service), server_socket_(-1), logger_(core::get_logger("WiFiTransport"))
+                                     services::StatisticsService &statistics_service,
+                                     std::shared_ptr<services::PacketMonitorService> packet_monitor)
+            : BaseTransport(config, routing_service, device_management, statistics_service), server_socket_(-1), logger_(core::get_logger("WiFiTransport")), packet_monitor_(packet_monitor)
         {
 
             memset(&server_addr_, 0, sizeof(server_addr_));
@@ -278,7 +279,7 @@ namespace mita
             {
                 auto handler = std::make_unique<WiFiClientHandler>(
                     client_socket, client_addr, config_,
-                    routing_service_, device_management_, statistics_service_);
+                    routing_service_, device_management_, statistics_service_, packet_monitor_);
 
                 {
                     std::lock_guard<std::mutex> lock(clients_mutex_);
@@ -370,7 +371,7 @@ namespace mita
                     return false; 
                 }
 
-                const size_t header_size = 8;
+                const size_t header_size = 16; // HEADER_SIZE from protocol
                 std::vector<uint8_t> header_data(header_size);
                 ssize_t received = recv(socket, header_data.data(), header_size, MSG_WAITALL);
                 if (received != static_cast<ssize_t>(header_size))

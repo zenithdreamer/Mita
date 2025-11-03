@@ -94,6 +94,9 @@ namespace mita
                     scan_thread_ = std::make_unique<std::thread>(&BLETransport::scan_loop, this);
                     logger_->info("Scan thread started successfully");
 
+                    device_management_.register_message_handler("ble", [this](const std::string &device_id, const protocol::ProtocolPacket &packet)
+                                                            { send_packet(device_id, packet); });
+
                     logger_->info("BLE transport started successfully",
                                  core::LogContext{}
                                      .add("service_uuid", config_.ble.service_uuid)

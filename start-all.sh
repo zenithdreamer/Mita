@@ -105,7 +105,7 @@ trap cleanup SIGINT SIGTERM EXIT
 
 # Start backend in background
 cd router
-./run.sh &
+./run.sh "$@" &
 BACKEND_PID=$!
 cd ..
 

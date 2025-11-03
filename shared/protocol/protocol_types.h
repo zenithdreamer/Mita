@@ -71,7 +71,7 @@ struct BasicProtocolPacket
     uint16_t source_addr;
     uint16_t dest_addr;
     uint8_t payload_length;
-    uint8_t reserved;
+    uint8_t checksum;
     uint8_t payload[MAX_PAYLOAD_SIZE];
 };
 

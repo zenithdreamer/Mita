@@ -220,7 +220,7 @@ bool MitaClient::sendHello()
     packet.msg_type = MSG_HELLO;
     packet.source_addr = UNASSIGNED_ADDRESS;
     packet.dest_addr = ROUTER_ADDRESS;
-    packet.reserved = 0;
+    packet.checksum = 0; // Will be computed automatically
 
     nonce1 = crypto_service.generateNonce();
 
@@ -277,7 +277,7 @@ bool MitaClient::sendAuth()
     packet.msg_type = MSG_AUTH;
     packet.source_addr = UNASSIGNED_ADDRESS;
     packet.dest_addr = ROUTER_ADDRESS;
-    packet.reserved = 0;
+    packet.checksum = 0; // Will be computed automatically
 
     size_t data_len = 4 + network_config.device_id.length() + network_config.router_id.length();
     uint8_t *auth_data = new uint8_t[data_len];
@@ -410,7 +410,7 @@ bool MitaClient::sendEncryptedMessage(uint16_t dest_addr, const String &message)
     packet.msg_type = MSG_DATA;
     packet.source_addr = assigned_address;
     packet.dest_addr = dest_addr;
-    packet.reserved = 0;
+    packet.checksum = 0; // Will be computed automatically
 
     size_t encrypted_len;
     if (!crypto_service.encryptPayload((uint8_t *)message.c_str(), message.length(),

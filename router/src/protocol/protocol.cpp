@@ -54,6 +54,34 @@ namespace mita
             payload_ = payload;
         }
 
+        uint8_t ProtocolPacket::compute_checksum() const
+        {
+            uint32_t sum = 0;
+
+            uint8_t version_flags = (version_ << 4) | (flags_ & 0x0F);
+            sum += version_flags;
+            sum += msg_type_;
+            sum += (source_addr_ >> 8) & 0xFF;
+            sum += source_addr_ & 0xFF;
+            sum += (dest_addr_ >> 8) & 0xFF;
+            sum += dest_addr_ & 0xFF;
+            sum += static_cast<uint8_t>(payload_.size());
+
+            // Add payload bytes
+            for (uint8_t byte : payload_)
+            {
+                sum += byte;
+            }
+
+            // Return 8-bit checksum (sum of all bytes modulo 256, then one's complement)
+            return static_cast<uint8_t>(~sum);
+        }
+
+        bool ProtocolPacket::verify_checksum(uint8_t received_checksum) const
+        {
+            return compute_checksum() == received_checksum;
+        }
+
         std::vector<uint8_t> ProtocolPacket::to_bytes() const
         {
             std::vector<uint8_t> data(PACKET_HEADER_SIZE + payload_.size());
@@ -67,7 +95,7 @@ namespace mita
             data[4] = (dest_addr_ >> 8) & 0xFF;
             data[5] = dest_addr_ & 0xFF;
             data[6] = static_cast<uint8_t>(payload_.size());
-            data[7] = 0; // reserved
+            data[7] = compute_checksum();
 
             std::copy(payload_.begin(), payload_.end(), data.begin() + PACKET_HEADER_SIZE);
 
@@ -93,6 +121,7 @@ namespace mita
             uint16_t source_addr = (static_cast<uint16_t>(data[2]) << 8) | data[3];
             uint16_t dest_addr = (static_cast<uint16_t>(data[4]) << 8) | data[5];
             uint8_t payload_len = data[6];
+            uint8_t received_checksum = data[7];
 
             if (version != PROTOCOL_VERSION)
             {
@@ -109,6 +138,16 @@ namespace mita
 
             auto packet = std::make_unique<ProtocolPacket>(static_cast<MessageType>(msg_type),
                                                            source_addr, dest_addr, payload, encrypted);
+
+            // Verify checksum
+            if (!packet->verify_checksum(received_checksum))
+            {
+                throw std::invalid_argument("Checksum verification failed");
+            }
+
+            // Store the verified checksum
+            packet->checksum_ = received_checksum;
+
             return packet;
         }
 

@@ -44,6 +44,7 @@ namespace mita
             uint16_t get_dest_addr() const { return dest_addr_; }
             const std::vector<uint8_t> &get_payload() const { return payload_; }
             bool is_encrypted() const { return flags_ & FLAG_ENCRYPTED; }
+            uint8_t get_checksum() const { return checksum_; }
 
             // Setters
             void set_encrypted(bool encrypted);
@@ -57,7 +58,11 @@ namespace mita
             uint8_t msg_type_ = 0;
             uint16_t source_addr_ = 0;
             uint16_t dest_addr_ = 0;
+            uint8_t checksum_ = 0;
             std::vector<uint8_t> payload_;
+
+            uint8_t compute_checksum() const;
+            bool verify_checksum(uint8_t received_checksum) const;
         };
 
         /**

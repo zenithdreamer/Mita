@@ -296,8 +296,6 @@ namespace mita
             {
                 logger_->info("Scan loop thread started");
 
-                int scan_cycle_count = 0;
-
                 while (running_)
                 {
                     try
@@ -321,49 +319,6 @@ namespace mita
 
                         // Cleanup disconnected devices
                         cleanup_disconnected_devices();
-
-                        
-                        // broadcast test delete later
-                        scan_cycle_count++;
-                        if (scan_cycle_count % 4 == 0)
-                        {
-                            auto authenticated_devices = device_registry_.get_authenticated_devices();
-                            if (!authenticated_devices.empty())
-                            {
-                                logger_->info("Sending broadcast test packet...",
-                                             core::LogContext{}.add("authenticated_devices", authenticated_devices.size()));
-
-
-                                std::string test_json = "{\"type\":\"broadcast_test\",\"message\":\"BLE_BROADCAST_TEST_" +
-                                                       std::to_string(scan_cycle_count) +
-                                                       "\",\"timestamp\":" + std::to_string(scan_cycle_count) + "}";
-
- 
-                                int sent_count = 0;
-                                for (const auto &handler : authenticated_devices)
-                                {
-                                    if (handler)
-                                    {
-
-                                        protocol::ProtocolPacket test_packet(MessageType::DATA, 0, handler->get_assigned_address());
-                                        test_packet.set_payload(std::vector<uint8_t>(test_json.begin(), test_json.end()));
-                                        test_packet.set_encrypted(true); 
-
-                                        if (handler->send_packet(test_packet))
-                                        {
-                                            sent_count++;
-                                        }
-                                    }
-                                }
-
-                                logger_->info("Broadcast test complete",
-                                             core::LogContext{}
-                                                 .add("message", test_json)
-                                                 .add("devices_sent", sent_count)
-                                                 .add("total_authenticated", authenticated_devices.size()));
-                            }
-                        }
-
 
                         std::unique_lock<std::mutex> lock(scan_mutex_);
                         scan_cv_.wait_for(lock, std::chrono::duration<double>(config_.ble.scan_pause),

@@ -12,8 +12,22 @@
 // Protocol constants
 #define PROTOCOL_VERSION 1
 #define FLAG_ENCRYPTED 0x01
-#define HEADER_SIZE 8
+#define HEADER_SIZE 16
 #define MAX_PAYLOAD_SIZE 256
+
+// Priority levels (2 bits in priority_flags)
+#define PRIORITY_LOW 0x00
+#define PRIORITY_NORMAL 0x01
+#define PRIORITY_HIGH 0x02
+#define PRIORITY_CRITICAL 0x03
+#define PRIORITY_MASK 0x03
+
+// Fragment flags (in priority_flags byte)
+#define FLAG_FRAGMENTED 0x04
+#define FLAG_MORE_FRAGMENTS 0x08
+
+// Default TTL
+#define DEFAULT_TTL 16
 
 // Cryptographic constants
 #define HMAC_SIZE 32
@@ -72,6 +86,11 @@ struct BasicProtocolPacket
     uint16_t dest_addr;
     uint8_t payload_length;
     uint8_t checksum;
+    uint16_t sequence_number;
+    uint8_t ttl;
+    uint8_t priority_flags;
+    uint16_t fragment_id;
+    uint16_t timestamp;
     uint8_t payload[MAX_PAYLOAD_SIZE];
 };
 

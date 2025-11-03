@@ -45,12 +45,27 @@ namespace mita
             const std::vector<uint8_t> &get_payload() const { return payload_; }
             bool is_encrypted() const { return flags_ & FLAG_ENCRYPTED; }
             uint8_t get_checksum() const { return checksum_; }
+            uint16_t get_sequence_number() const { return sequence_number_; }
+            uint8_t get_ttl() const { return ttl_; }
+            uint8_t get_priority() const { return priority_flags_ & PRIORITY_MASK; }
+            uint8_t get_priority_flags() const { return priority_flags_; }
+            uint16_t get_fragment_id() const { return fragment_id_; }
+            uint16_t get_timestamp() const { return timestamp_; }
+            bool is_fragmented() const { return priority_flags_ & FLAG_FRAGMENTED; }
+            bool has_more_fragments() const { return priority_flags_ & FLAG_MORE_FRAGMENTS; }
 
             // Setters
             void set_encrypted(bool encrypted);
             void set_source_addr(uint16_t addr) { source_addr_ = addr; }
             void set_dest_addr(uint16_t addr) { dest_addr_ = addr; }
             void set_payload(const std::vector<uint8_t> &payload);
+            void set_sequence_number(uint16_t seq) { sequence_number_ = seq; }
+            void set_ttl(uint8_t ttl) { ttl_ = ttl; }
+            void set_priority(uint8_t priority) { priority_flags_ = (priority_flags_ & ~PRIORITY_MASK) | (priority & PRIORITY_MASK); }
+            void set_fragment_id(uint16_t frag_id) { fragment_id_ = frag_id; }
+            void set_timestamp(uint16_t ts) { timestamp_ = ts; }
+            void set_fragmented(bool fragmented);
+            void decrement_ttl() { if (ttl_ > 0) ttl_--; }
 
         private:
             uint8_t version_ = PROTOCOL_VERSION;
@@ -59,6 +74,11 @@ namespace mita
             uint16_t source_addr_ = 0;
             uint16_t dest_addr_ = 0;
             uint8_t checksum_ = 0;
+            uint16_t sequence_number_ = 0;
+            uint8_t ttl_ = DEFAULT_TTL;
+            uint8_t priority_flags_ = PRIORITY_NORMAL;
+            uint16_t fragment_id_ = 0;
+            uint16_t timestamp_ = 0;
             std::vector<uint8_t> payload_;
 
             uint8_t compute_checksum() const;

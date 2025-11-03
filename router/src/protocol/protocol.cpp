@@ -45,6 +45,18 @@ namespace mita
             }
         }
 
+        void ProtocolPacket::set_fragmented(bool fragmented)
+        {
+            if (fragmented)
+            {
+                priority_flags_ |= FLAG_FRAGMENTED;
+            }
+            else
+            {
+                priority_flags_ &= ~FLAG_FRAGMENTED;
+            }
+        }
+
         void ProtocolPacket::set_payload(const std::vector<uint8_t> &payload)
         {
             if (payload.size() > PACKET_MAX_PAYLOAD_SIZE)
@@ -66,6 +78,15 @@ namespace mita
             sum += (dest_addr_ >> 8) & 0xFF;
             sum += dest_addr_ & 0xFF;
             sum += static_cast<uint8_t>(payload_.size());
+            // Byte 7 (checksum) is NOT included in computation
+            sum += (sequence_number_ >> 8) & 0xFF;
+            sum += sequence_number_ & 0xFF;
+            sum += ttl_;
+            sum += priority_flags_;
+            sum += (fragment_id_ >> 8) & 0xFF;
+            sum += fragment_id_ & 0xFF;
+            sum += (timestamp_ >> 8) & 0xFF;
+            sum += timestamp_ & 0xFF;
 
             // Add payload bytes
             for (uint8_t byte : payload_)
@@ -96,6 +117,14 @@ namespace mita
             data[5] = dest_addr_ & 0xFF;
             data[6] = static_cast<uint8_t>(payload_.size());
             data[7] = compute_checksum();
+            data[8] = (sequence_number_ >> 8) & 0xFF;
+            data[9] = sequence_number_ & 0xFF;
+            data[10] = ttl_;
+            data[11] = priority_flags_;
+            data[12] = (fragment_id_ >> 8) & 0xFF;
+            data[13] = fragment_id_ & 0xFF;
+            data[14] = (timestamp_ >> 8) & 0xFF;
+            data[15] = timestamp_ & 0xFF;
 
             std::copy(payload_.begin(), payload_.end(), data.begin() + PACKET_HEADER_SIZE);
 
@@ -123,6 +152,12 @@ namespace mita
             uint8_t payload_len = data[6];
             uint8_t received_checksum = data[7];
 
+            uint16_t sequence_number = (static_cast<uint16_t>(data[8]) << 8) | data[9];
+            uint8_t ttl = data[10];
+            uint8_t priority_flags = data[11];
+            uint16_t fragment_id = (static_cast<uint16_t>(data[12]) << 8) | data[13];
+            uint16_t timestamp = (static_cast<uint16_t>(data[14]) << 8) | data[15];
+
             if (version != PROTOCOL_VERSION)
             {
                 throw std::invalid_argument("Unsupported protocol version: " + std::to_string(version));
@@ -138,6 +173,13 @@ namespace mita
 
             auto packet = std::make_unique<ProtocolPacket>(static_cast<MessageType>(msg_type),
                                                            source_addr, dest_addr, payload, encrypted);
+
+            // Set extended header fields
+            packet->sequence_number_ = sequence_number;
+            packet->ttl_ = ttl;
+            packet->priority_flags_ = priority_flags;
+            packet->fragment_id_ = fragment_id;
+            packet->timestamp_ = timestamp;
 
             // Verify checksum
             if (!packet->verify_checksum(received_checksum))

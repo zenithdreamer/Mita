@@ -221,6 +221,11 @@ bool MitaClient::sendHello()
     packet.source_addr = UNASSIGNED_ADDRESS;
     packet.dest_addr = ROUTER_ADDRESS;
     packet.checksum = 0; // Will be computed automatically
+    packet.sequence_number = 0; // Handshake packets don't need sequence
+    packet.ttl = DEFAULT_TTL;
+    packet.priority_flags = PRIORITY_HIGH; // Handshake is high priority
+    packet.fragment_id = 0;
+    packet.timestamp = (uint16_t)(millis() & 0xFFFF);
 
     nonce1 = crypto_service.generateNonce();
 
@@ -278,6 +283,11 @@ bool MitaClient::sendAuth()
     packet.source_addr = UNASSIGNED_ADDRESS;
     packet.dest_addr = ROUTER_ADDRESS;
     packet.checksum = 0; // Will be computed automatically
+    packet.sequence_number = 0; // Handshake packets don't need sequence
+    packet.ttl = DEFAULT_TTL;
+    packet.priority_flags = PRIORITY_HIGH; // Handshake is high priority
+    packet.fragment_id = 0;
+    packet.timestamp = (uint16_t)(millis() & 0xFFFF);
 
     size_t data_len = 4 + network_config.device_id.length() + network_config.router_id.length();
     uint8_t *auth_data = new uint8_t[data_len];
@@ -405,12 +415,21 @@ bool MitaClient::sendEncryptedMessage(uint16_t dest_addr, const String &message)
         return false;
     }
 
+    // Simple sequence number using milliseconds (wraps every 65 seconds)
+    static uint16_t sequence_counter = 0;
+    sequence_counter++;
+
     ProtocolPacket packet;
     packet.version_flags = (PROTOCOL_VERSION << 4) | FLAG_ENCRYPTED;
     packet.msg_type = MSG_DATA;
     packet.source_addr = assigned_address;
     packet.dest_addr = dest_addr;
     packet.checksum = 0; // Will be computed automatically
+    packet.sequence_number = sequence_counter;
+    packet.ttl = DEFAULT_TTL;
+    packet.priority_flags = PRIORITY_NORMAL; // Normal priority for data
+    packet.fragment_id = 0;
+    packet.timestamp = (uint16_t)(millis() & 0xFFFF);
 
     size_t encrypted_len;
     if (!crypto_service.encryptPayload((uint8_t *)message.c_str(), message.length(),

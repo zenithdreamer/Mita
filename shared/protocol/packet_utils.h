@@ -16,6 +16,15 @@ public:
         sum += (packet.dest_addr >> 8) & 0xFF;
         sum += packet.dest_addr & 0xFF;
         sum += packet.payload_length;
+        // Byte 7 (checksum) is NOT included
+        sum += (packet.sequence_number >> 8) & 0xFF;
+        sum += packet.sequence_number & 0xFF;
+        sum += packet.ttl;
+        sum += packet.priority_flags;
+        sum += (packet.fragment_id >> 8) & 0xFF;
+        sum += packet.fragment_id & 0xFF;
+        sum += (packet.timestamp >> 8) & 0xFF;
+        sum += packet.timestamp & 0xFF;
 
         // Add payload bytes
         for (uint8_t i = 0; i < packet.payload_length; i++) {
@@ -35,6 +44,14 @@ public:
         buffer[5] = packet.dest_addr & 0xFF;
         buffer[6] = packet.payload_length;
         buffer[7] = computeChecksum(packet);
+        buffer[8] = (packet.sequence_number >> 8) & 0xFF;
+        buffer[9] = packet.sequence_number & 0xFF;
+        buffer[10] = packet.ttl;
+        buffer[11] = packet.priority_flags;
+        buffer[12] = (packet.fragment_id >> 8) & 0xFF;
+        buffer[13] = packet.fragment_id & 0xFF;
+        buffer[14] = (packet.timestamp >> 8) & 0xFF;
+        buffer[15] = packet.timestamp & 0xFF;
 
         if (packet.payload_length > 0) {
             memcpy(buffer + HEADER_SIZE, packet.payload, packet.payload_length);
@@ -54,6 +71,12 @@ public:
         packet.dest_addr = (buffer[4] << 8) | buffer[5];
         packet.payload_length = buffer[6];
         uint8_t received_checksum = buffer[7];
+
+        packet.sequence_number = (buffer[8] << 8) | buffer[9];
+        packet.ttl = buffer[10];
+        packet.priority_flags = buffer[11];
+        packet.fragment_id = (buffer[12] << 8) | buffer[13];
+        packet.timestamp = (buffer[14] << 8) | buffer[15];
 
         if (length < HEADER_SIZE + packet.payload_length) {
             return false;

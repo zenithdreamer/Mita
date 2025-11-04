@@ -1,10 +1,15 @@
+import { Badge } from "../ui/badge";
+
 export function StatusCard({ status }: { status: string }) {
-    const bgClass =
-        status === "active" ? "bg-green-500" : status === "inactive" ? "bg-red-500" : "bg-yellow-500";
+    const getCustomClass = () => {
+        if (status === "active") return "bg-green-500 border-green-500 text-white";
+        if (status === "inactive") return "bg-red-500 border-red-500 text-white";
+        return "bg-yellow-500 border-yellow-500 text-white";
+    };
 
     return (
-        <div className={`items-center inline-flex ${bgClass} px-2 rounded-md`}>
-            <p className="font-bold text-white">{status}</p>
-        </div>
+        <Badge variant={"outline"} className={getCustomClass()}>
+            {status}
+        </Badge>
     );
 }

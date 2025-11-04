@@ -1,4 +1,4 @@
-import { RoutingTablePage } from "@/components/RoutingTablePage"
+import { RoutingTablePage } from "@/pages/RoutingTablePage"
 
 const mockRoutingData = [
   {

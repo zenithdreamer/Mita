@@ -1,4 +1,4 @@
-import { RoutingTable } from "./organisms/RoutingTable";
+import { RoutingTable } from "../components/organisms/RoutingTable";
 
 interface RoutingTablePageProps {
     data: {

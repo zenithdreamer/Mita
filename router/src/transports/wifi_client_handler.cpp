@@ -228,9 +228,12 @@ namespace mita
             cleanup();
         }
 
-        bool WiFiClientHandler::receive_packet(protocol::ProtocolPacket &packet, int timeout_ms)
+        bool WiFiClientHandler::receive_packet_from_socket(int socket,
+                                                           protocol::ProtocolPacket &packet,
+                                                           int timeout_ms,
+                                                           std::shared_ptr<core::Logger> logger)
         {
-            if (client_socket_ < 0)
+            if (socket < 0)
             {
                 return false;
             }
@@ -240,13 +243,13 @@ namespace mita
                 // Use select for timeout
                 fd_set read_fds;
                 FD_ZERO(&read_fds);
-                FD_SET(client_socket_, &read_fds);
+                FD_SET(socket, &read_fds);
 
                 struct timeval timeout;
                 timeout.tv_sec = timeout_ms / 1000;
                 timeout.tv_usec = (timeout_ms % 1000) * 1000;
 
-                int select_result = select(client_socket_ + 1, &read_fds, nullptr, nullptr, &timeout);
+                int select_result = select(socket + 1, &read_fds, nullptr, nullptr, &timeout);
                 if (select_result <= 0)
                 {
                     return false; // Timeout or error
@@ -255,7 +258,7 @@ namespace mita
                 // Read header first (16 bytes)
                 const size_t header_size = 16; // HEADER_SIZE from protocol
                 std::vector<uint8_t> header_data(header_size);
-                ssize_t received = recv(client_socket_, header_data.data(), header_size, MSG_WAITALL);
+                ssize_t received = recv(socket, header_data.data(), header_size, MSG_WAITALL);
                 if (received != static_cast<ssize_t>(header_size))
                 {
                     return false;
@@ -271,11 +274,14 @@ namespace mita
                 if (payload_length > 0)
                 {
                     std::vector<uint8_t> payload_data(payload_length);
-                    received = recv(client_socket_, payload_data.data(), payload_length, MSG_WAITALL);
+                    received = recv(socket, payload_data.data(), payload_length, MSG_WAITALL);
                     if (received != static_cast<ssize_t>(payload_length))
                     {
-                        logger_->error("Failed to receive complete payload",
-                                       core::LogContext().add("client_address", client_address_str_).add("expected", payload_length).add("received", received));
+                        if (logger)
+                        {
+                            logger->error("fail to receive packet",
+                                         core::LogContext().add("expected", payload_length).add("received", received));
+                        }
                         return false;
                     }
                     packet_data.insert(packet_data.end(), payload_data.begin(), payload_data.end());
@@ -285,29 +291,53 @@ namespace mita
                 auto parsed_packet = protocol::ProtocolPacket::from_bytes(packet_data);
                 if (!parsed_packet)
                 {
-                    logger_->error("Failed to parse packet",
-                                   core::LogContext().add("client_address", client_address_str_));
+                    if (logger)
+                    {
+                        logger->error("failed to parse packet");
+                    }
                     return false;
                 }
 
                 packet = *parsed_packet;
-                
+                return true;
+            }
+            catch (const std::exception &e)
+            {
+                if (logger)
+                {
+                    logger->error("Exception receiving packet",
+                                 core::LogContext().add("error", e.what()));
+                }
+                return false;
+            }
+        }
+
+        bool WiFiClientHandler::receive_packet(protocol::ProtocolPacket &packet, int timeout_ms)
+        {
+            if (client_socket_ < 0)
+            {
+                return false;
+            }
+
+            bool success = receive_packet_from_socket(client_socket_, packet, timeout_ms, logger_);
+
+            if (success)
+            {
                 // Capture incoming packet for monitoring (handshake or data)
                 if (packet_monitor_)
                 {
                     packet_monitor_->capture_packet(packet, "inbound", core::TransportType::WIFI);
                 }
 
-                statistics_service_.record_transport_packet_received("wifi", packet_data.size());
-                return true;
+                size_t packet_size = 16 + packet.get_payload().size();
+                statistics_service_.record_transport_packet_received("wifi", packet_size);
             }
-            catch (const std::exception &e)
+            else
             {
-                logger_->error("Exception receiving packet",
-                               core::LogContext().add("client_address", client_address_str_).add("error", e.what()));
                 statistics_service_.record_transport_error("wifi");
-                return false;
             }
+
+            return success;
         }
 
         void WiFiClientHandler::handle_handshake_packet(const protocol::ProtocolPacket &packet)

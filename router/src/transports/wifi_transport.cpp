@@ -233,7 +233,7 @@ namespace mita
 
             //read hello packet to get device_id
             protocol::ProtocolPacket hello_packet;
-            if (!receive_hello_packet(client_socket, hello_packet, 5000))
+            if (!WiFiClientHandler::receive_packet_from_socket(client_socket, hello_packet, 5000,logger_))
             {
                 logger_->warning("Failed to receive HELLO packet, closing connection");
                 close(client_socket);
@@ -249,7 +249,7 @@ namespace mita
                 return;
             }
 
-            
+
             {
                 std::lock_guard<std::mutex> lock(clients_mutex_);
 
@@ -344,73 +344,6 @@ namespace mita
                 return it->second.get();
             }
             return nullptr;
-        }
-
-        //dont mind this shit for now it fucking cooked I just want a device_id
-        bool WiFiTransport::receive_hello_packet(int socket, protocol::ProtocolPacket &packet, int timeout_ms)
-        {
-            if (socket < 0)
-            {
-                return false;
-            }
-
-            try
-            {
-
-                fd_set read_fds;
-                FD_ZERO(&read_fds);
-                FD_SET(socket, &read_fds);
-
-                struct timeval timeout;
-                timeout.tv_sec = timeout_ms / 1000;
-                timeout.tv_usec = (timeout_ms % 1000) * 1000;
-
-                int select_result = select(socket + 1, &read_fds, nullptr, nullptr, &timeout);
-                if (select_result <= 0)
-                {
-                    return false; 
-                }
-
-                const size_t header_size = 16; // HEADER_SIZE from protocol
-                std::vector<uint8_t> header_data(header_size);
-                ssize_t received = recv(socket, header_data.data(), header_size, MSG_WAITALL);
-                if (received != static_cast<ssize_t>(header_size))
-                {
-                    return false;
-                }
-
-                uint8_t payload_length = header_data[6];
-
-                std::vector<uint8_t> packet_data = header_data;
-                if (payload_length > 0)
-                {
-                    std::vector<uint8_t> payload_data(payload_length);
-                    received = recv(socket, payload_data.data(), payload_length, MSG_WAITALL);
-                    if (received != static_cast<ssize_t>(payload_length))
-                    {
-                        logger_->error("Failed to receive complete payload in HELLO",
-                                       core::LogContext().add("expected", payload_length).add("received", received));
-                        return false;
-                    }
-                    packet_data.insert(packet_data.end(), payload_data.begin(), payload_data.end());
-                }
-
-                auto parsed_packet = protocol::ProtocolPacket::from_bytes(packet_data);
-                if (!parsed_packet)
-                {
-                    logger_->error("Failed to parse HELLO packet");
-                    return false;
-                }
-
-                packet = *parsed_packet;
-                return true;
-            }
-            catch (const std::exception &e)
-            {
-                logger_->error("Exception receiving HELLO packet",
-                               core::LogContext().add("error", e.what()));
-                return false;
-            }
         }
 
     } // namespace transports

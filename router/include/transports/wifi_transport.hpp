@@ -56,7 +56,7 @@ private:
     void handle_new_client(int client_socket, const sockaddr_in& client_addr);
     void cleanup_disconnected_clients();
     WiFiClientHandler* find_client_handler(const std::string& device_id);
-    bool receive_hello_packet(int socket, protocol::ProtocolPacket& packet, int timeout_ms);
+
     // Server socket
     int server_socket_;
     sockaddr_in server_addr_;

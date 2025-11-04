@@ -1,38 +1,33 @@
 import { useState, useEffect } from 'react';
 import { PacketTable } from './organisms/PacketTable';
 import { PacketDetailModal } from './molecules/PacketDetailModal';
-
-interface Packet {
-    id: string;
-    timestamp: number;
-    direction: string;
-    sourceAddr: string;
-    destAddr: string;
-    messageType: string;
-    payloadSize: number;
-    transport: string;
-    encrypted: boolean;
-    rawData: string;
-    decodedHeader: string;
-    decodedPayload: string;
-}
+import { getPackets, clearPackets as clearPacketsApi } from '@/api';
+import type { PacketInfoDto } from '@/api';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { RefreshCw, Pause, Play, Trash2 } from 'lucide-react';
 
 export function PacketMonitorPage() {
-    const [packets, setPackets] = useState<Packet[]>([]);
-    const [selectedPacket, setSelectedPacket] = useState<Packet | null>(null);
+    const [packets, setPackets] = useState<PacketInfoDto[]>([]);
+    const [selectedPacket, setSelectedPacket] = useState<PacketInfoDto | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [autoRefresh, setAutoRefresh] = useState(true);
 
     const fetchPackets = async () => {
         try {
-            const response = await fetch('http://localhost:8080/api/packets?limit=100');
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
+            const response = await getPackets({
+                query: {
+                    limit: 100,
+                    offset: 0
+                }
+            });
+
+            if (response.data) {
+                setPackets(response.data.packets || []);
+                setError(null);
             }
-            const data = await response.json();
-            setPackets(data.packets || []);
-            setError(null);
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Failed to fetch packets');
             console.error('Error fetching packets:', err);
@@ -41,14 +36,9 @@ export function PacketMonitorPage() {
         }
     };
 
-    const clearPackets = async () => {
+    const handleClearPackets = async () => {
         try {
-            const response = await fetch('http://localhost:8080/api/packets', {
-                method: 'DELETE',
-            });
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
+            await clearPacketsApi();
             setPackets([]);
             setError(null);
         } catch (err) {
@@ -61,102 +51,124 @@ export function PacketMonitorPage() {
         fetchPackets();
 
         if (autoRefresh) {
-            const interval = setInterval(fetchPackets, 2000); // Refresh every 2 seconds
+            const interval = setInterval(fetchPackets, 2000);
             return () => clearInterval(interval);
         }
     }, [autoRefresh]);
 
-    const formatDate = (timestamp: number) => {
+    const formatDate = (timestamp: number | undefined) => {
+        if (!timestamp) return 'N/A';
         return new Date(timestamp).toLocaleString();
     };
 
     return (
-        <div className="packet-monitor-page p-6 bg-gray-50 min-h-screen">
-            <div className="max-w-7xl mx-auto">
-                <div className="bg-white rounded-lg shadow-md p-6 mb-6">
-                    <div className="flex justify-between items-center mb-4">
+        <div className="space-y-6">
+            <div>
+                <h1 className="text-3xl font-bold tracking-tight">Packet Monitor</h1>
+                <p className="text-muted-foreground">Live packet capture and inspection</p>
+            </div>
+
+            <Card>
+                <CardHeader>
+                    <div className="flex items-center justify-between">
                         <div>
-                            <h1 className="text-3xl font-bold text-gray-800">Packet Monitor</h1>
-                            <p className="text-gray-600 mt-1">Live packet capture and inspection</p>
+                            <CardTitle>Capture Controls</CardTitle>
+                            <CardDescription>Manage packet capture and monitoring</CardDescription>
                         </div>
-                        <div className="flex gap-3">
-                            <button
+                        <div className="flex gap-2">
+                            <Button
+                                variant={autoRefresh ? "default" : "outline"}
+                                size="sm"
                                 onClick={() => setAutoRefresh(!autoRefresh)}
-                                className={`px-4 py-2 rounded-lg font-medium transition-colors ${
-                                    autoRefresh
-                                        ? 'bg-green-500 hover:bg-green-600 text-white'
-                                        : 'bg-gray-300 hover:bg-gray-400 text-gray-700'
-                                }`}
                             >
-                                {autoRefresh ? '⏸ Pause' : '▶ Resume'}
-                            </button>
-                            <button
+                                {autoRefresh ? (
+                                    <>
+                                        <Pause className="h-4 w-4 mr-2" />
+                                        Pause
+                                    </>
+                                ) : (
+                                    <>
+                                        <Play className="h-4 w-4 mr-2" />
+                                        Resume
+                                    </>
+                                )}
+                            </Button>
+                            <Button
+                                variant="outline"
+                                size="sm"
                                 onClick={fetchPackets}
                                 disabled={isLoading}
-                                className="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg font-medium transition-colors disabled:opacity-50"
                             >
-                                🔄 Refresh
-                            </button>
-                            <button
-                                onClick={clearPackets}
-                                className="px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg font-medium transition-colors"
+                                <RefreshCw className="h-4 w-4 mr-2" />
+                                Refresh
+                            </Button>
+                            <Button
+                                variant="destructive"
+                                size="sm"
+                                onClick={handleClearPackets}
                             >
-                                🗑️ Clear All
-                            </button>
+                                <Trash2 className="h-4 w-4 mr-2" />
+                                Clear
+                            </Button>
                         </div>
                     </div>
-
-                    <div className="flex items-center gap-4 text-sm text-gray-600">
+                </CardHeader>
+                <CardContent>
+                    <div className="flex items-center gap-4">
                         <div className="flex items-center gap-2">
-                            <span className="font-medium">Total Packets:</span>
-                            <span className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full font-semibold">
-                                {packets.length}
-                            </span>
+                            <span className="text-sm font-medium">Total Packets:</span>
+                            <Badge variant="secondary">{packets.length}</Badge>
                         </div>
                         <div className="flex items-center gap-2">
-                            <span className="font-medium">Auto-refresh:</span>
-                            <span className={`px-3 py-1 rounded-full font-semibold ${
-                                autoRefresh ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'
-                            }`}>
+                            <span className="text-sm font-medium">Auto-refresh:</span>
+                            <Badge variant={autoRefresh ? "default" : "outline"}>
                                 {autoRefresh ? 'ON' : 'OFF'}
-                            </span>
+                            </Badge>
                         </div>
                     </div>
-                </div>
+                </CardContent>
+            </Card>
 
-                {error && (
-                    <div className="bg-red-50 border border-red-300 text-red-800 px-4 py-3 rounded-lg mb-4">
-                        <strong>Error:</strong> {error}
-                    </div>
-                )}
+            {error && (
+                <Card className="border-destructive">
+                    <CardContent className="pt-6">
+                        <p className="text-sm text-destructive">
+                            <strong>Error:</strong> {error}
+                        </p>
+                    </CardContent>
+                </Card>
+            )}
 
-                {isLoading && packets.length === 0 ? (
-                    <div className="bg-white rounded-lg shadow-md p-12 text-center">
-                        <div className="text-gray-400 text-lg">Loading packets...</div>
-                    </div>
-                ) : packets.length === 0 ? (
-                    <div className="bg-white rounded-lg shadow-md p-12 text-center">
-                        <div className="text-gray-400 text-lg mb-2">No packets captured yet</div>
-                        <div className="text-gray-500 text-sm">
+            {isLoading && packets.length === 0 ? (
+                <Card>
+                    <CardContent className="p-12 text-center">
+                        <p className="text-muted-foreground">Loading packets...</p>
+                    </CardContent>
+                </Card>
+            ) : packets.length === 0 ? (
+                <Card>
+                    <CardContent className="p-12 text-center">
+                        <p className="text-lg text-muted-foreground mb-2">No packets captured yet</p>
+                        <p className="text-sm text-muted-foreground">
                             Packets will appear here once network activity is detected
-                        </div>
-                    </div>
-                ) : (
-                    <PacketTable 
-                        packets={packets} 
-                        onPacketClick={setSelectedPacket}
-                        formatDate={formatDate}
-                    />
-                )}
+                        </p>
+                    </CardContent>
+                </Card>
+            ) : (
+                <PacketTable
+                    packets={packets}
+                    onPacketClick={setSelectedPacket}
+                    formatDate={formatDate}
+                />
+            )}
 
-                {selectedPacket && (
-                    <PacketDetailModal
-                        packet={selectedPacket}
-                        onClose={() => setSelectedPacket(null)}
-                        formatDate={formatDate}
-                    />
-                )}
-            </div>
+            {selectedPacket && (
+                <PacketDetailModal
+                    packet={selectedPacket}
+                    onClose={() => setSelectedPacket(null)}
+                    formatDate={formatDate}
+                />
+            )}
         </div>
     );
 }

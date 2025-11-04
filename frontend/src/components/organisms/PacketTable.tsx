@@ -1,126 +1,113 @@
-interface Packet {
-    id: string;
-    timestamp: number;
-    direction: string;
-    sourceAddr: string;
-    destAddr: string;
-    messageType: string;
-    payloadSize: number;
-    transport: string;
-    encrypted: boolean;
-    rawData: string;
-    decodedHeader: string;
-    decodedPayload: string;
-}
+import type { PacketInfoDto } from '@/api';
+import { Badge } from '@/components/ui/badge';
+import { Card } from '@/components/ui/card';
+import {
+    Table,
+    TableBody,
+    TableCell,
+    TableHead,
+    TableHeader,
+    TableRow,
+} from '@/components/ui/table';
+import { Lock, Wifi, Radio } from 'lucide-react';
 
 interface PacketTableProps {
-    packets: Packet[];
-    onPacketClick: (packet: Packet) => void;
-    formatDate: (timestamp: number) => string;
+    packets: PacketInfoDto[];
+    onPacketClick: (packet: PacketInfoDto) => void;
+    formatDate: (timestamp: number | undefined) => string;
 }
 
 export function PacketTable({ packets, onPacketClick, formatDate }: PacketTableProps) {
-    const getDirectionColor = (direction: string) => {
+    const getDirectionVariant = (direction?: string) => {
         switch (direction) {
             case 'inbound':
-                return 'bg-blue-100 text-blue-800';
+                return 'default';
             case 'outbound':
-                return 'bg-green-100 text-green-800';
+                return 'secondary';
             case 'forwarded':
-                return 'bg-purple-100 text-purple-800';
+                return 'outline';
             default:
-                return 'bg-gray-100 text-gray-800';
+                return 'outline';
         }
     };
 
-    const getTransportIcon = (transport: string) => {
-        return transport === 'wifi' ? '📶' : '🔷';
-    };
-
-    const getMessageTypeColor = (type: string) => {
-        const colors: Record<string, string> = {
-            'HELLO': 'bg-yellow-100 text-yellow-800',
-            'CHALLENGE': 'bg-orange-100 text-orange-800',
-            'AUTH': 'bg-red-100 text-red-800',
-            'AUTH_ACK': 'bg-green-100 text-green-800',
-            'DATA': 'bg-blue-100 text-blue-800',
-            'ACK': 'bg-teal-100 text-teal-800',
-            'CONTROL': 'bg-purple-100 text-purple-800',
-            'ERROR': 'bg-red-200 text-red-900',
-        };
-        return colors[type] || 'bg-gray-100 text-gray-800';
+    const getTransportIcon = (transport?: string) => {
+        if (transport?.toLowerCase() === 'wifi') {
+            return <Wifi className="h-3 w-3" />;
+        }
+        return <Radio className="h-3 w-3" />;
     };
 
     return (
-        <div className="bg-white rounded-lg shadow-md overflow-hidden">
+        <Card>
             <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-gray-200">
-                    <thead className="bg-gray-50">
-                        <tr>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                Timestamp
-                            </th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                Direction
-                            </th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                Type
-                            </th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                Source → Dest
-                            </th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                Size
-                            </th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                Transport
-                            </th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                Flags
-                            </th>
-                        </tr>
-                    </thead>
-                    <tbody className="bg-white divide-y divide-gray-200">
-                        {packets.map((packet) => (
-                            <tr
-                                key={packet.id}
-                                onClick={() => onPacketClick(packet)}
-                                className="hover:bg-gray-50 cursor-pointer transition-colors"
-                            >
-                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                    {formatDate(packet.timestamp)}
-                                </td>
-                                <td className="px-6 py-4 whitespace-nowrap">
-                                    <span className={`px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${getDirectionColor(packet.direction)}`}>
-                                        {packet.direction}
-                                    </span>
-                                </td>
-                                <td className="px-6 py-4 whitespace-nowrap">
-                                    <span className={`px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${getMessageTypeColor(packet.messageType)}`}>
-                                        {packet.messageType}
-                                    </span>
-                                </td>
-                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 font-mono">
-                                    {packet.sourceAddr} → {packet.destAddr}
-                                </td>
-                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                    {packet.payloadSize} bytes
-                                </td>
-                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                    {getTransportIcon(packet.transport)} {packet.transport.toUpperCase()}
-                                </td>
-                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                    {packet.encrypted && (
-                                        <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
-                                            🔒 Encrypted
-                                        </span>
-                                    )}
-                                </td>
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
+                <Table>
+                    <TableHeader>
+                        <TableRow>
+                            <TableHead>Timestamp</TableHead>
+                            <TableHead>Direction</TableHead>
+                            <TableHead>Type</TableHead>
+                            <TableHead>Source → Dest</TableHead>
+                            <TableHead className="text-right">Size</TableHead>
+                            <TableHead>Transport</TableHead>
+                            <TableHead>Flags</TableHead>
+                        </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                        {packets.length === 0 ? (
+                            <TableRow>
+                                <TableCell colSpan={7} className="text-center text-muted-foreground">
+                                    No packets to display
+                                </TableCell>
+                            </TableRow>
+                        ) : (
+                            packets.map((packet) => (
+                                <TableRow
+                                    key={packet.id}
+                                    onClick={() => onPacketClick(packet)}
+                                    className="cursor-pointer"
+                                >
+                                    <TableCell className="font-mono text-xs">
+                                        {formatDate(packet.timestamp)}
+                                    </TableCell>
+                                    <TableCell>
+                                        <Badge variant={getDirectionVariant(packet.direction)}>
+                                            {packet.direction || 'unknown'}
+                                        </Badge>
+                                    </TableCell>
+                                    <TableCell>
+                                        <Badge variant="outline">
+                                            {packet.messageType || 'N/A'}
+                                        </Badge>
+                                    </TableCell>
+                                    <TableCell className="font-mono text-xs">
+                                        {packet.sourceAddr || 'N/A'} → {packet.destAddr || 'N/A'}
+                                    </TableCell>
+                                    <TableCell className="text-right">
+                                        {packet.payloadSize || 0} bytes
+                                    </TableCell>
+                                    <TableCell>
+                                        <div className="flex items-center gap-1">
+                                            {getTransportIcon(packet.transport)}
+                                            <span className="text-xs uppercase">
+                                                {packet.transport || 'N/A'}
+                                            </span>
+                                        </div>
+                                    </TableCell>
+                                    <TableCell>
+                                        {packet.encrypted && (
+                                            <Badge variant="secondary" className="gap-1">
+                                                <Lock className="h-3 w-3" />
+                                                Encrypted
+                                            </Badge>
+                                        )}
+                                    </TableCell>
+                                </TableRow>
+                            ))
+                        )}
+                    </TableBody>
+                </Table>
             </div>
-        </div>
+        </Card>
     );
 }

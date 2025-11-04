@@ -5,6 +5,7 @@
 #include "services/device_management_service.hpp"
 #include "services/statistics_service.hpp"
 #include "services/packet_monitor_service.hpp"
+#include "config/mita_config.h"
 
 #include <unistd.h>
 #include <arpa/inet.h>
@@ -25,7 +26,7 @@ namespace mita
                                              services::DeviceManagementService &device_management,
                                              services::StatisticsService &statistics_service,
                                              std::shared_ptr<services::PacketMonitorService> packet_monitor)
-            : client_socket_(client_socket), client_addr_(client_addr), config_(config), routing_service_(routing_service), device_management_(device_management), statistics_service_(statistics_service), packet_monitor_(packet_monitor), assigned_address_(0), authenticated_(false), running_(false), logger_(core::get_logger("WiFiClientHandler"))
+            : client_socket_(client_socket), client_addr_(client_addr), config_(config), routing_service_(routing_service), device_management_(device_management), statistics_service_(statistics_service), packet_monitor_(packet_monitor), assigned_address_(0), authenticated_(false), running_(false), last_heartbeat_(std::chrono::steady_clock::now()), logger_(core::get_logger("WiFiClientHandler"))
         {
 
             // Convert client address to string
@@ -63,14 +64,18 @@ namespace mita
 
         void WiFiClientHandler::stop()
         {
-            if (!running_.exchange(false))
-            {
-                return; // Already stopped
-            }
+
+            running_ = false;
+
 
             if (handler_thread_ && handler_thread_->joinable())
             {
-                handler_thread_->join();
+
+                if (handler_thread_->get_id() != std::this_thread::get_id())
+                {
+                    handler_thread_->join();
+                }
+
             }
 
             cleanup();
@@ -107,6 +112,8 @@ namespace mita
             // Reset authentication state
             authenticated_ = false;
             session_crypto_.reset();
+
+            update_heartbeat();
 
             // Reinitialize handshake manager
             handshake_manager_ = std::make_unique<protocol::HandshakeManager>(
@@ -192,7 +199,14 @@ namespace mita
                         }
                         else
                         {
-                            handle_data_packet(packet);
+
+                            if (packet.get_message_type() == MessageType::HEARTBEAT)
+                            {
+                                handle_heartbeat_packet(packet);
+                            }
+                            else
+                                handle_data_packet(packet);
+
                         }
                     }
                     else
@@ -208,6 +222,17 @@ namespace mita
                             logger_->warning("Client handshake timeout",
                                              core::LogContext().add("client_address", client_address_str_));
                             break;
+                        }
+                        else
+                        {
+                        
+                            if (check_heartbeat_timeout())
+                            {
+                                logger_->warning("Client heartbeat timeout, marking as disconnected",
+                                                core::LogContext().add("device_id", device_id_));
+                                running_ = false;
+                                break;
+                            }
                         }
                     }
                 }
@@ -425,6 +450,8 @@ namespace mita
                             // Mark as authenticated
                             authenticated_ = true;
 
+                            update_heartbeat();
+
                             // Obtain session crypto for this device if available
                             session_crypto_ = handshake_manager_->get_session_crypto(device_id_);
                             // Remove handshake state as it's no longer needed
@@ -487,6 +514,44 @@ namespace mita
                 close(client_socket_);
                 client_socket_ = -1;
             }
+        }
+
+        void WiFiClientHandler::handle_heartbeat_packet(const protocol::ProtocolPacket &packet)
+        {
+            update_heartbeat();
+
+            logger_->debug("ESP send heartbeat received from ",
+                          core::LogContext().add("device_id", device_id_));
+        }
+
+        void WiFiClientHandler::update_heartbeat()
+        {
+            std::lock_guard<std::mutex> lock(heartbeat_mutex_);
+            last_heartbeat_ = std::chrono::steady_clock::now();
+        }
+
+        bool WiFiClientHandler::check_heartbeat_timeout()
+        {
+            if (!authenticated_)
+            {
+                return false;
+            }
+
+            std::lock_guard<std::mutex> lock(heartbeat_mutex_);
+            auto now = std::chrono::steady_clock::now();
+            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_heartbeat_).count();
+
+            if (elapsed > MITA_HEARTBEAT_TIMEOUT_MS)
+            {
+                logger_->warning("Heartbeat timeout - client appears disconnected",
+                                core::LogContext()
+                                    .add("device_id", device_id_)
+                                    .add("elapsed_ms", elapsed)
+                                    .add("timeout_ms", MITA_HEARTBEAT_TIMEOUT_MS));
+                return true;
+            }
+
+            return false;
         }
 
     } // namespace transports

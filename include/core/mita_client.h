@@ -28,7 +28,7 @@ private:
     // Timing
     unsigned long last_heartbeat;
     unsigned long last_sensor_reading;
-    static const unsigned long HEARTBEAT_INTERVAL = 30000;
+    static const unsigned long HEARTBEAT_INTERVAL = 10000;
     static const unsigned long SENSOR_INTERVAL = 10000;
 
     // Handshake methods

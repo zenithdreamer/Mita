@@ -66,6 +66,9 @@ private:
     bool receive_packet(protocol::ProtocolPacket& packet, int timeout_ms = 5000);
     void handle_handshake_packet(const protocol::ProtocolPacket& packet);
     void handle_data_packet(const protocol::ProtocolPacket& packet);
+    void handle_heartbeat_packet(const protocol::ProtocolPacket& packet);
+    void update_heartbeat();
+    bool check_heartbeat_timeout();
     void cleanup();
 
     // Network
@@ -88,6 +91,10 @@ private:
     bool authenticated_;
     std::atomic<bool> running_;
     std::optional<protocol::ProtocolPacket> pending_hello_;
+
+    //track heart beat
+    std::chrono::steady_clock::time_point last_heartbeat_;
+    std::mutex heartbeat_mutex_;
 
     // Threading
     std::unique_ptr<std::thread> handler_thread_;

@@ -300,38 +300,47 @@ namespace mita
         }
         void WiFiTransport::cleanup_disconnected_clients()
         {
-            std::lock_guard<std::mutex> lock(clients_mutex_);
 
-            int cleaned = 0;
-            auto it = client_handlers_.begin();
-            while (it != client_handlers_.end())
+            std::vector<std::unique_ptr<WiFiClientHandler>> handlers_to_cleanup;
+
             {
-                if (!it->second->is_running())
+                std::lock_guard<std::mutex> lock(clients_mutex_);
+
+                int cleaned = 0;
+                auto it = client_handlers_.begin();
+                while (it != client_handlers_.end())
                 {
-                    std::string device_id = it->first; 
-
-                    logger_->debug("Removing disconnected client",
-                                   core::LogContext().add("device_id", device_id));
-
-                    if (!device_id.empty())
+                    if (!it->second->is_running())
                     {
-                        device_management_.remove_device(device_id);
+                        std::string device_id = it->first;
+
+                        logger_->debug("Removing disconnected client",
+                                       core::LogContext().add("device_id", device_id));
+
+                        if (!device_id.empty())
+                        {
+                            device_management_.remove_device(device_id);
+                        }
+
+
+                        handlers_to_cleanup.push_back(std::move(it->second));
+                        it = client_handlers_.erase(it);
+                        cleaned++;
                     }
-
-                    it = client_handlers_.erase(it);
-                    cleaned++;
+                    else
+                    {
+                        ++it;
+                    }
                 }
-                else
+
+                if (cleaned > 0)
                 {
-                    ++it;
+                    logger_->debug("Clean up disconnected client",
+                                   core::LogContext().add("cleaned_count", cleaned).add("remaining", client_handlers_.size()));
                 }
             }
 
-            if (cleaned > 0)
-            {
-                logger_->debug("Clean up disconnected client",
-                               core::LogContext().add("cleaned_count", cleaned).add("remaining", client_handlers_.size()));
-            }
+            handlers_to_cleanup.clear();
         }
 
         //map key is now device_id

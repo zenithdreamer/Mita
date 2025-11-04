@@ -50,6 +50,7 @@ enum class MessageType : uint8_t
     DATA = 0x05,
     ACK = 0x06,
     CONTROL = 0x07,
+    HEARTBEAT = 0x08,
     ERROR = 0xFF
 };
 
@@ -71,6 +72,7 @@ constexpr uint8_t MSG_AUTH_ACK = static_cast<uint8_t>(MessageType::AUTH_ACK);
 constexpr uint8_t MSG_DATA = static_cast<uint8_t>(MessageType::DATA);
 constexpr uint8_t MSG_ACK = static_cast<uint8_t>(MessageType::ACK);
 constexpr uint8_t MSG_CONTROL = static_cast<uint8_t>(MessageType::CONTROL);
+constexpr uint8_t MSG_HEARTBEAT = static_cast<uint8_t>(MessageType::HEARTBEAT);
 constexpr uint8_t MSG_ERROR = static_cast<uint8_t>(MessageType::ERROR);
 
 constexpr uint16_t ROUTER_ADDRESS = PROTOCOL_ROUTER_ADDRESS;

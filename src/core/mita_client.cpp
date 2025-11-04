@@ -128,19 +128,22 @@ String MitaClient::getDeviceId() const
 
 bool MitaClient::sendHeartbeat()
 {
-    DynamicJsonDocument doc(256);
-    doc["type"] = "heartbeat";
-    doc["device_id"] = network_config.device_id;
-    doc["timestamp"] = millis();
-    doc["uptime"] = millis() / 1000;
-    doc["free_heap"] = ESP.getFreeHeap();
-    doc["transport"] = transport->getType() == TRANSPORT_WIFI ? "wifi" : "ble";
 
-    String message;
-    serializeJson(doc, message);
+    ProtocolPacket packet;
+    packet.version_flags = (PROTOCOL_VERSION << 4);
+    packet.msg_type = MSG_HEARTBEAT;
+    packet.source_addr = assigned_address;
+    packet.dest_addr = ROUTER_ADDRESS;
+    packet.checksum = 0;
+    packet.sequence_number = 0; 
+    packet.ttl = DEFAULT_TTL;
+    packet.priority_flags = PRIORITY_LOW;
+    packet.fragment_id = 0;
+    packet.timestamp = (uint16_t)(millis() & 0xFFFF);
+    packet.payload_length = 0;
 
-    Serial.printf("MitaClient: Sending heartbeat (%d bytes)\n", message.length());
-    return sendEncryptedMessage(ROUTER_ADDRESS, message);
+    Serial.println("MitaClient: Sending heartbeat");
+    return transport->sendPacket(packet);
 }
 
 //send data to router

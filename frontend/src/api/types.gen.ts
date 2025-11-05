@@ -4,17 +4,6 @@ export type ClientOptions = {
     baseUrl: 'http://localhost:8080' | (string & {});
 };
 
-export type StatusDto = {
-    status: string;
-    message: string;
-    uptime: number;
-};
-
-export type PacketListDto = {
-    packets?: Array<PacketInfoDto>;
-    total?: number;
-};
-
 export type DashboardStatsDto = {
     status: string;
     uptime: number;
@@ -35,6 +24,51 @@ export type DashboardStatsDto = {
     downloadSpeed?: number;
 };
 
+export type DeviceDto = {
+    device_id?: string;
+    device_type?: string;
+    status?: string;
+    last_seen?: number;
+    rssi?: number;
+    battery_level?: number;
+};
+
+export type DevicesDto = {
+    devices?: Array<DeviceDto>;
+};
+
+export type SuccessDto = {
+    message?: string;
+};
+
+export type RouteDto = {
+    destination?: string;
+    next_hop?: string;
+    metric?: number;
+    interface_type?: string;
+};
+
+export type RoutingTableDto = {
+    routes?: Array<RouteDto>;
+};
+
+export type UserInfoDto = {
+    id?: number;
+    username?: string;
+    createdAt?: number;
+};
+
+export type LoginRequestDto = {
+    /**
+     * Username for authentication
+     */
+    username: string;
+    /**
+     * Password for authentication
+     */
+    password: string;
+};
+
 export type LoginResponseDto = {
     success: boolean;
     message: string;
@@ -42,12 +76,68 @@ export type LoginResponseDto = {
     userId?: number;
 };
 
-export type ProtocolInfoDto = {
-    name?: string;
-    status?: string;
-    connectedDevices?: number;
-    description?: string;
-    enabled?: boolean;
+export type SettingsDto = {
+    /**
+     * WiFi transport enabled
+     */
+    wifiEnabled?: boolean;
+    /**
+     * BLE transport enabled
+     */
+    bleEnabled?: boolean;
+    /**
+     * Zigbee transport enabled
+     */
+    zigbeeEnabled?: boolean;
+    /**
+     * Packet monitor enabled
+     */
+    monitorEnabled?: boolean;
+    updatedAt?: number;
+};
+
+export type PacketInfoDto = {
+    id?: string;
+    timestamp?: number;
+    direction?: string;
+    sourceAddr?: string;
+    destAddr?: string;
+    messageType?: string;
+    payloadSize?: number;
+    transport?: string;
+    encrypted?: boolean;
+    rawData?: string;
+    decodedHeader?: string;
+    decodedPayload?: string;
+};
+
+export type StatusDto = {
+    status: string;
+    message: string;
+    uptime: number;
+};
+
+export type PacketListDto = {
+    packets?: Array<PacketInfoDto>;
+    total?: number;
+};
+
+export type ProtocolStatsDto = {
+    protocols?: Array<ProtocolStatDto>;
+};
+
+export type ErrorDto = {
+    message?: string;
+};
+
+export type ProtocolStatDto = {
+    protocol?: string;
+    packets_sent?: number;
+    packets_received?: number;
+    bytes_sent?: number;
+    bytes_received?: number;
+    errors?: number;
+    active_connections?: number;
 };
 
 export type SystemResourcesDto = {
@@ -73,6 +163,10 @@ export type SystemResourcesDto = {
     storageTotal?: number;
 };
 
+export type ProtocolListDto = {
+    protocols?: Array<ProtocolInfoDto>;
+};
+
 export type NetworkStatsDto = {
     totalPackets?: number;
     packetsPerSecond?: number;
@@ -82,68 +176,29 @@ export type NetworkStatsDto = {
     bytesDownloaded?: number;
 };
 
-export type ProtocolListDto = {
-    protocols?: Array<ProtocolInfoDto>;
+export type ProtocolInfoDto = {
+    name?: string;
+    status?: string;
+    connectedDevices?: number;
+    description?: string;
+    enabled?: boolean;
 };
 
-export type PacketInfoDto = {
-    id?: string;
-    timestamp?: number;
-    direction?: string;
-    sourceAddr?: string;
-    destAddr?: string;
-    messageType?: string;
-    payloadSize?: number;
-    transport?: string;
-    encrypted?: boolean;
-    rawData?: string;
-    decodedHeader?: string;
-    decodedPayload?: string;
+export type OptionsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/*';
 };
 
-export type SettingsDto = {
+export type OptionsResponses = {
     /**
-     * WiFi transport enabled
+     * No Content
      */
-    wifiEnabled?: boolean;
-    /**
-     * BLE transport enabled
-     */
-    bleEnabled?: boolean;
-    /**
-     * Zigbee transport enabled
-     */
-    zigbeeEnabled?: boolean;
-    /**
-     * Packet monitor enabled
-     */
-    monitorEnabled?: boolean;
-    updatedAt?: number;
+    204: string;
 };
 
-export type UpdateSettingsRequestDto = {
-    wifiEnabled?: boolean;
-    bleEnabled?: boolean;
-    zigbeeEnabled?: boolean;
-    monitorEnabled?: boolean;
-};
-
-export type LoginRequestDto = {
-    /**
-     * Username for authentication
-     */
-    username: string;
-    /**
-     * Password for authentication
-     */
-    password: string;
-};
-
-export type UserInfoDto = {
-    id?: number;
-    username?: string;
-    createdAt?: number;
-};
+export type OptionsResponse = OptionsResponses[keyof OptionsResponses];
 
 export type GetStatusData = {
     body?: never;
@@ -209,6 +264,22 @@ export type GetNetworkStatusResponses = {
 
 export type GetNetworkStatusResponse = GetNetworkStatusResponses[keyof GetNetworkStatusResponses];
 
+export type StatusOptionsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/status*';
+};
+
+export type StatusOptionsResponses = {
+    /**
+     * success
+     */
+    200: string;
+};
+
+export type StatusOptionsResponse = StatusOptionsResponses[keyof StatusOptionsResponses];
+
 export type ClearPacketsData = {
     body?: never;
     path?: never;
@@ -250,6 +321,188 @@ export type GetPacketsResponses = {
 
 export type GetPacketsResponse = GetPacketsResponses[keyof GetPacketsResponses];
 
+export type PacketsOptionsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/packets*';
+};
+
+export type PacketsOptionsResponses = {
+    /**
+     * success
+     */
+    200: string;
+};
+
+export type PacketsOptionsResponse = PacketsOptionsResponses[keyof PacketsOptionsResponses];
+
+export type GetRoutingTableData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/routing-table';
+};
+
+export type GetRoutingTableErrors = {
+    /**
+     * Internal Server Error
+     */
+    500: ErrorDto;
+};
+
+export type GetRoutingTableError = GetRoutingTableErrors[keyof GetRoutingTableErrors];
+
+export type GetRoutingTableResponses = {
+    /**
+     * OK
+     */
+    200: RoutingTableDto;
+};
+
+export type GetRoutingTableResponse = GetRoutingTableResponses[keyof GetRoutingTableResponses];
+
+export type AddRouteData = {
+    body: RouteDto;
+    path?: never;
+    query?: never;
+    url: '/api/routing-table';
+};
+
+export type AddRouteErrors = {
+    /**
+     * Bad Request
+     */
+    400: ErrorDto;
+    /**
+     * Internal Server Error
+     */
+    500: ErrorDto;
+};
+
+export type AddRouteError = AddRouteErrors[keyof AddRouteErrors];
+
+export type AddRouteResponses = {
+    /**
+     * OK
+     */
+    200: SuccessDto;
+};
+
+export type AddRouteResponse = AddRouteResponses[keyof AddRouteResponses];
+
+export type DeleteRouteData = {
+    body?: never;
+    path: {
+        destination: string;
+    };
+    query?: never;
+    url: '/api/routing-table/{destination}';
+};
+
+export type DeleteRouteErrors = {
+    /**
+     * Not Found
+     */
+    404: ErrorDto;
+    /**
+     * Internal Server Error
+     */
+    500: ErrorDto;
+};
+
+export type DeleteRouteError = DeleteRouteErrors[keyof DeleteRouteErrors];
+
+export type DeleteRouteResponses = {
+    /**
+     * OK
+     */
+    200: SuccessDto;
+};
+
+export type DeleteRouteResponse = DeleteRouteResponses[keyof DeleteRouteResponses];
+
+export type GetDevicesData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/devices';
+};
+
+export type GetDevicesErrors = {
+    /**
+     * Internal Server Error
+     */
+    500: ErrorDto;
+};
+
+export type GetDevicesError = GetDevicesErrors[keyof GetDevicesErrors];
+
+export type GetDevicesResponses = {
+    /**
+     * OK
+     */
+    200: DevicesDto;
+};
+
+export type GetDevicesResponse = GetDevicesResponses[keyof GetDevicesResponses];
+
+export type GetDeviceData = {
+    body?: never;
+    path: {
+        deviceId: string;
+    };
+    query?: never;
+    url: '/api/devices/{deviceId}';
+};
+
+export type GetDeviceErrors = {
+    /**
+     * Not Found
+     */
+    404: ErrorDto;
+    /**
+     * Internal Server Error
+     */
+    500: ErrorDto;
+};
+
+export type GetDeviceError = GetDeviceErrors[keyof GetDeviceErrors];
+
+export type GetDeviceResponses = {
+    /**
+     * OK
+     */
+    200: DeviceDto;
+};
+
+export type GetDeviceResponse = GetDeviceResponses[keyof GetDeviceResponses];
+
+export type DiscoverDevicesData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/devices/discover';
+};
+
+export type DiscoverDevicesErrors = {
+    /**
+     * Internal Server Error
+     */
+    500: ErrorDto;
+};
+
+export type DiscoverDevicesError = DiscoverDevicesErrors[keyof DiscoverDevicesErrors];
+
+export type DiscoverDevicesResponses = {
+    /**
+     * OK
+     */
+    200: SuccessDto;
+};
+
+export type DiscoverDevicesResponse = DiscoverDevicesResponses[keyof DiscoverDevicesResponses];
+
 export type GetProtocolsData = {
     body?: never;
     path?: never;
@@ -265,6 +518,31 @@ export type GetProtocolsResponses = {
 };
 
 export type GetProtocolsResponse = GetProtocolsResponses[keyof GetProtocolsResponses];
+
+export type GetProtocolStatsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/protocols/stats';
+};
+
+export type GetProtocolStatsErrors = {
+    /**
+     * Internal Server Error
+     */
+    500: ErrorDto;
+};
+
+export type GetProtocolStatsError = GetProtocolStatsErrors[keyof GetProtocolStatsErrors];
+
+export type GetProtocolStatsResponses = {
+    /**
+     * OK
+     */
+    200: ProtocolStatsDto;
+};
+
+export type GetProtocolStatsResponse = GetProtocolStatsResponses[keyof GetProtocolStatsResponses];
 
 export type GetSettingsData = {
     body?: never;
@@ -283,7 +561,7 @@ export type GetSettingsResponses = {
 export type GetSettingsResponse = GetSettingsResponses[keyof GetSettingsResponses];
 
 export type UpdateSettingsData = {
-    body: UpdateSettingsRequestDto;
+    body: SettingsDto;
     path?: never;
     query?: never;
     url: '/api/settings';
@@ -306,22 +584,6 @@ export type UpdateSettingsResponses = {
 };
 
 export type UpdateSettingsResponse = UpdateSettingsResponses[keyof UpdateSettingsResponses];
-
-export type OptionsData = {
-    body?: never;
-    path?: never;
-    query?: never;
-    url: '/*';
-};
-
-export type OptionsResponses = {
-    /**
-     * success
-     */
-    200: string;
-};
-
-export type OptionsResponse = OptionsResponses[keyof OptionsResponses];
 
 export type LoginData = {
     body: LoginRequestDto;

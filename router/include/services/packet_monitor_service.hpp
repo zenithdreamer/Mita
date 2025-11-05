@@ -90,6 +90,7 @@ namespace mita
             std::string decode_payload(const protocol::ProtocolPacket &packet) const;
             void save_packet_to_db(const CapturedPacket &packet);
             std::string bytes_to_hex(const std::vector<uint8_t> &data) const;
+            std::vector<uint8_t> hex_to_bytes(const std::string &hex) const;
 
             std::shared_ptr<core::Logger> logger_;
             std::shared_ptr<mita::db::Storage> storage_;

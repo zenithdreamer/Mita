@@ -240,4 +240,70 @@ class UpdateSettingsRequestDto : public oatpp::DTO {
   DTO_FIELD(Boolean, monitorEnabled);
 };
 
+// Additional DTOs for separated controllers
+class ErrorDto : public oatpp::DTO {
+  DTO_INIT(ErrorDto, DTO)
+
+  DTO_FIELD(String, message);
+};
+
+class SuccessDto : public oatpp::DTO {
+  DTO_INIT(SuccessDto, DTO)
+
+  DTO_FIELD(String, message);
+};
+
+// Routing DTOs
+class RouteDto : public oatpp::DTO {
+  DTO_INIT(RouteDto, DTO)
+
+  DTO_FIELD(String, destination);
+  DTO_FIELD(String, next_hop);
+  DTO_FIELD(Int32, metric);
+  DTO_FIELD(String, interface_type);
+};
+
+class RoutingTableDto : public oatpp::DTO {
+  DTO_INIT(RoutingTableDto, DTO)
+
+  DTO_FIELD(Vector<Object<RouteDto>>, routes);
+};
+
+// Device DTOs
+class DeviceDto : public oatpp::DTO {
+  DTO_INIT(DeviceDto, DTO)
+
+  DTO_FIELD(String, device_id);
+  DTO_FIELD(String, device_type);
+  DTO_FIELD(String, status);
+  DTO_FIELD(Int64, last_seen);
+  DTO_FIELD(Int32, rssi);
+  DTO_FIELD(Int32, battery_level);
+};
+
+class DevicesDto : public oatpp::DTO {
+  DTO_INIT(DevicesDto, DTO)
+
+  DTO_FIELD(Vector<Object<DeviceDto>>, devices);
+};
+
+// Protocol Stats DTOs
+class ProtocolStatDto : public oatpp::DTO {
+  DTO_INIT(ProtocolStatDto, DTO)
+
+  DTO_FIELD(String, protocol);
+  DTO_FIELD(Int64, packets_sent);
+  DTO_FIELD(Int64, packets_received);
+  DTO_FIELD(Int64, bytes_sent);
+  DTO_FIELD(Int64, bytes_received);
+  DTO_FIELD(Int32, errors);
+  DTO_FIELD(Int32, active_connections);
+};
+
+class ProtocolStatsDto : public oatpp::DTO {
+  DTO_INIT(ProtocolStatsDto, DTO)
+
+  DTO_FIELD(Vector<Object<ProtocolStatDto>>, protocols);
+};
+
 #include OATPP_CODEGEN_END(DTO)

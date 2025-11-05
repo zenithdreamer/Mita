@@ -8,6 +8,12 @@
 #include "oatpp-swagger/Controller.hpp"
 #include "oatpp-swagger/Resources.hpp"
 #include "api/controller.hpp"
+#include "api/controllers/status_controller.hpp"
+#include "api/controllers/packets_controller.hpp"
+#include "api/controllers/routing_controller.hpp"
+#include "api/controllers/devices_controller.hpp"
+#include "api/controllers/protocols_controller.hpp"
+#include "api/controllers/settings_controller.hpp"
 #include "api/auth_controller.hpp"
 #include "api/auth_interceptor.hpp"
 #include "services/packet_monitor_service.hpp"
@@ -78,9 +84,28 @@ public:
     // Create authentication interceptor
     auto authInterceptor = std::make_shared<AuthInterceptor>(m_authService);
 
-    // Create API Controller with packet monitor, device manager, settings service, and router
+    // Create API Controllers
     auto apiController = std::make_shared<RouterApiController>(objectMapper, m_packetMonitor, m_deviceManager, m_settingsService, m_router);
     router->addController(apiController);
+
+    // Create specialized controllers
+    auto statusController = StatusController::createShared(objectMapper);
+    router->addController(statusController);
+
+    auto packetsController = PacketsController::createShared(objectMapper, m_packetMonitor);
+    router->addController(packetsController);
+
+    auto routingController = RoutingController::createShared(objectMapper);
+    router->addController(routingController);
+
+    auto devicesController = DevicesController::createShared(objectMapper);
+    router->addController(devicesController);
+
+    auto protocolsController = ProtocolsController::createShared(objectMapper, m_deviceManager);
+    router->addController(protocolsController);
+
+    auto settingsController = SettingsController::createShared(objectMapper, m_settingsService, m_router);
+    router->addController(settingsController);
 
     // Create Auth Controller
     auto authController = std::make_shared<AuthController>(objectMapper, m_authService);
@@ -100,10 +125,15 @@ public:
     auto swaggerResources = oatpp::swagger::Resources::streamResources(nullptr);
     #endif
 
-    // Combine endpoints from both controllers for Swagger
+    // Combine endpoints from all controllers for Swagger
     auto apiEndpoints = apiController->getEndpoints();
-    auto authEndpoints = authController->getEndpoints();
-    apiEndpoints.append(authEndpoints);
+    apiEndpoints.append(statusController->getEndpoints());
+    apiEndpoints.append(packetsController->getEndpoints());
+    apiEndpoints.append(routingController->getEndpoints());
+    apiEndpoints.append(devicesController->getEndpoints());
+    apiEndpoints.append(protocolsController->getEndpoints());
+    apiEndpoints.append(settingsController->getEndpoints());
+    apiEndpoints.append(authController->getEndpoints());
 
     auto swaggerController = oatpp::swagger::Controller::createShared(
       apiEndpoints,

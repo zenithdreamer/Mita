@@ -20,6 +20,34 @@ namespace mita
                          core::LogContext()
                             .add("max_packets", max_packets)
                             .add("database_enabled", storage_ != nullptr));
+            // If storage is provided, load recent packets from DB into memory
+            try {
+                if (storage_) {
+                    using namespace sqlite_orm;
+                    auto rows = storage_->get_all<mita::db::MonitoredPacket>();
+                    // Load most recent up to max_packets_ into deque (most recent first)
+                    size_t count = 0;
+                    for (auto it = rows.rbegin(); it != rows.rend() && count < max_packets_; ++it, ++count) {
+                        CapturedPacket p;
+                        p.id = it->packet_id;
+                        p.timestamp = std::chrono::system_clock::time_point(std::chrono::milliseconds(it->timestamp));
+                        p.direction = it->direction;
+                        p.source_addr = static_cast<uint16_t>(it->source_addr);
+                        p.dest_addr = static_cast<uint16_t>(it->dest_addr);
+                        p.message_type = it->message_type;
+                        p.payload_size = static_cast<size_t>(it->payload_size);
+                        p.transport = it->transport;
+                        p.encrypted = it->encrypted != 0;
+                        p.raw_data = hex_to_bytes(it->raw_data);
+                        p.decoded_header = it->decoded_header;
+                        p.decoded_payload = it->decoded_payload;
+                        packets_.push_back(std::move(p));
+                    }
+                }
+            } catch (const std::exception &e) {
+                logger_->warning("Failed to load packets from DB",
+                                 core::LogContext().add("error", e.what()));
+            }
         }
 
         PacketMonitorService::~PacketMonitorService()
@@ -413,6 +441,20 @@ namespace mita
                                 .add("packet_id", packet.id)
                                 .add("error", e.what()));
             }
+        }
+
+        std::vector<uint8_t> PacketMonitorService::hex_to_bytes(const std::string &hex) const
+        {
+            std::vector<uint8_t> bytes;
+            if (hex.empty()) return bytes;
+            size_t len = hex.length();
+            bytes.reserve(len / 2);
+            for (size_t i = 0; i + 1 < len; i += 2) {
+                std::string byteString = hex.substr(i, 2);
+                uint8_t byte = static_cast<uint8_t>(std::stoul(byteString, nullptr, 16));
+                bytes.push_back(byte);
+            }
+            return bytes;
         }
 
         std::string PacketMonitorService::bytes_to_hex(const std::vector<uint8_t> &data) const

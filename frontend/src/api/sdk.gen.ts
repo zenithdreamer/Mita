@@ -2,7 +2,7 @@
 
 import type { Client, Options as Options2, TDataShape } from './client';
 import { client } from './client.gen';
-import type { ClearPacketsData, ClearPacketsResponses, GetCurrentUserData, GetCurrentUserErrors, GetCurrentUserResponses, GetDeviceStatusData, GetDeviceStatusResponses, GetNetworkStatusData, GetNetworkStatusResponses, GetPacketsData, GetPacketsResponses, GetProtocolsData, GetProtocolsResponses, GetSettingsData, GetSettingsResponses, GetStatusData, GetStatusResponses, GetSystemStatusData, GetSystemStatusResponses, LoginData, LoginErrors, LoginResponses, LogoutData, LogoutResponses, OptionsData, OptionsResponses, UpdateSettingsData, UpdateSettingsErrors, UpdateSettingsResponses } from './types.gen';
+import type { AddRouteData, AddRouteErrors, AddRouteResponses, ClearPacketsData, ClearPacketsResponses, DeleteRouteData, DeleteRouteErrors, DeleteRouteResponses, DiscoverDevicesData, DiscoverDevicesErrors, DiscoverDevicesResponses, GetCurrentUserData, GetCurrentUserErrors, GetCurrentUserResponses, GetDeviceData, GetDeviceErrors, GetDeviceResponses, GetDevicesData, GetDevicesErrors, GetDevicesResponses, GetDeviceStatusData, GetDeviceStatusResponses, GetNetworkStatusData, GetNetworkStatusResponses, GetPacketsData, GetPacketsResponses, GetProtocolsData, GetProtocolsResponses, GetProtocolStatsData, GetProtocolStatsErrors, GetProtocolStatsResponses, GetRoutingTableData, GetRoutingTableErrors, GetRoutingTableResponses, GetSettingsData, GetSettingsResponses, GetStatusData, GetStatusResponses, GetSystemStatusData, GetSystemStatusResponses, LoginData, LoginErrors, LoginResponses, LogoutData, LogoutResponses, OptionsData, OptionsResponses, PacketsOptionsData, PacketsOptionsResponses, StatusOptionsData, StatusOptionsResponses, UpdateSettingsData, UpdateSettingsErrors, UpdateSettingsResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean> = Options2<TData, ThrowOnError> & {
     /**
@@ -16,6 +16,18 @@ export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends 
      * used to access values that aren't defined as part of the SDK function.
      */
     meta?: Record<string, unknown>;
+};
+
+/**
+ * CORS preflight handler
+ *
+ * Handles CORS preflight OPTIONS requests
+ */
+export const options = <ThrowOnError extends boolean = false>(options?: Options<OptionsData, ThrowOnError>) => {
+    return (options?.client ?? client).options<OptionsResponses, unknown, ThrowOnError>({
+        url: '/*',
+        ...options
+    });
 };
 
 /**
@@ -66,6 +78,13 @@ export const getNetworkStatus = <ThrowOnError extends boolean = false>(options?:
     });
 };
 
+export const statusOptions = <ThrowOnError extends boolean = false>(options?: Options<StatusOptionsData, ThrowOnError>) => {
+    return (options?.client ?? client).options<StatusOptionsResponses, unknown, ThrowOnError>({
+        url: '/api/status*',
+        ...options
+    });
+};
+
 /**
  * Clear all captured packets
  */
@@ -88,14 +107,109 @@ export const getPackets = <ThrowOnError extends boolean = false>(options: Option
     });
 };
 
+export const packetsOptions = <ThrowOnError extends boolean = false>(options?: Options<PacketsOptionsData, ThrowOnError>) => {
+    return (options?.client ?? client).options<PacketsOptionsResponses, unknown, ThrowOnError>({
+        url: '/api/packets*',
+        ...options
+    });
+};
+
 /**
- * Get protocol status
+ * Get routing table
+ *
+ * Retrieve the current routing table
+ */
+export const getRoutingTable = <ThrowOnError extends boolean = false>(options?: Options<GetRoutingTableData, ThrowOnError>) => {
+    return (options?.client ?? client).get<GetRoutingTableResponses, GetRoutingTableErrors, ThrowOnError>({
+        url: '/api/routing-table',
+        ...options
+    });
+};
+
+/**
+ * Add a route
+ *
+ * Add a new route to the routing table
+ */
+export const addRoute = <ThrowOnError extends boolean = false>(options: Options<AddRouteData, ThrowOnError>) => {
+    return (options.client ?? client).post<AddRouteResponses, AddRouteErrors, ThrowOnError>({
+        url: '/api/routing-table',
+        ...options,
+        headers: {
+            'Content-Type': 'application/json',
+            ...options.headers
+        }
+    });
+};
+
+/**
+ * Delete a route
+ *
+ * Remove a route from the routing table
+ */
+export const deleteRoute = <ThrowOnError extends boolean = false>(options: Options<DeleteRouteData, ThrowOnError>) => {
+    return (options.client ?? client).delete<DeleteRouteResponses, DeleteRouteErrors, ThrowOnError>({
+        url: '/api/routing-table/{destination}',
+        ...options
+    });
+};
+
+/**
+ * Get all devices
+ *
+ * Retrieve list of all discovered devices in the mesh network
+ */
+export const getDevices = <ThrowOnError extends boolean = false>(options?: Options<GetDevicesData, ThrowOnError>) => {
+    return (options?.client ?? client).get<GetDevicesResponses, GetDevicesErrors, ThrowOnError>({
+        url: '/api/devices',
+        ...options
+    });
+};
+
+/**
+ * Get device by ID
+ *
+ * Retrieve detailed information about a specific device
+ */
+export const getDevice = <ThrowOnError extends boolean = false>(options: Options<GetDeviceData, ThrowOnError>) => {
+    return (options.client ?? client).get<GetDeviceResponses, GetDeviceErrors, ThrowOnError>({
+        url: '/api/devices/{deviceId}',
+        ...options
+    });
+};
+
+/**
+ * Discover devices
+ *
+ * Trigger device discovery process to find new devices in the network
+ */
+export const discoverDevices = <ThrowOnError extends boolean = false>(options?: Options<DiscoverDevicesData, ThrowOnError>) => {
+    return (options?.client ?? client).post<DiscoverDevicesResponses, DiscoverDevicesErrors, ThrowOnError>({
+        url: '/api/devices/discover',
+        ...options
+    });
+};
+
+/**
+ * Get protocols
  *
  * Returns status of supported protocols (WiFi, BLE, Zigbee, etc.)
  */
 export const getProtocols = <ThrowOnError extends boolean = false>(options?: Options<GetProtocolsData, ThrowOnError>) => {
     return (options?.client ?? client).get<GetProtocolsResponses, unknown, ThrowOnError>({
         url: '/api/protocols',
+        ...options
+    });
+};
+
+/**
+ * Get protocol statistics
+ *
+ * Retrieve statistics for all supported protocols (BLE, WiFi, LoRa)
+ */
+export const getProtocolStats = <ThrowOnError extends boolean = false>(options?: Options<GetProtocolStatsData, ThrowOnError>) => {
+    return (options?.client ?? client).get<GetProtocolStatsResponses, GetProtocolStatsErrors, ThrowOnError>({
+        url: '/api/protocols/stats',
         ...options
     });
 };
@@ -125,13 +239,6 @@ export const updateSettings = <ThrowOnError extends boolean = false>(options: Op
             'Content-Type': 'application/json',
             ...options.headers
         }
-    });
-};
-
-export const options = <ThrowOnError extends boolean = false>(options?: Options<OptionsData, ThrowOnError>) => {
-    return (options?.client ?? client).options<OptionsResponses, unknown, ThrowOnError>({
-        url: '/*',
-        ...options
     });
 };
 

@@ -2,7 +2,7 @@
 
 import type { Client, Options as Options2, TDataShape } from './client';
 import { client } from './client.gen';
-import type { AddRouteData, AddRouteErrors, AddRouteResponses, ClearPacketsData, ClearPacketsResponses, DeleteRouteData, DeleteRouteErrors, DeleteRouteResponses, DiscoverDevicesData, DiscoverDevicesErrors, DiscoverDevicesResponses, GetCurrentUserData, GetCurrentUserErrors, GetCurrentUserResponses, GetDeviceData, GetDeviceErrors, GetDeviceResponses, GetDevicesData, GetDevicesErrors, GetDevicesResponses, GetDeviceStatusData, GetDeviceStatusResponses, GetNetworkStatusData, GetNetworkStatusResponses, GetPacketsData, GetPacketsResponses, GetProtocolsData, GetProtocolsResponses, GetProtocolStatsData, GetProtocolStatsErrors, GetProtocolStatsResponses, GetRoutingTableData, GetRoutingTableErrors, GetRoutingTableResponses, GetSettingsData, GetSettingsResponses, GetStatusData, GetStatusResponses, GetSystemStatusData, GetSystemStatusResponses, LoginData, LoginErrors, LoginResponses, LogoutData, LogoutResponses, OptionsData, OptionsResponses, PacketsOptionsData, PacketsOptionsResponses, StatusOptionsData, StatusOptionsResponses, UpdateSettingsData, UpdateSettingsErrors, UpdateSettingsResponses } from './types.gen';
+import type { AddRouteData, AddRouteErrors, AddRouteResponses, ClearPacketsData, ClearPacketsResponses, DeleteRouteData, DeleteRouteErrors, DeleteRouteResponses, DiscoverDevicesData, DiscoverDevicesErrors, DiscoverDevicesResponses, GetBleDevicesData, GetBleDevicesErrors, GetBleDevicesResponses, GetCurrentUserData, GetCurrentUserErrors, GetCurrentUserResponses, GetDeviceData, GetDeviceErrors, GetDeviceResponses, GetDeviceStatusData, GetDeviceStatusResponses, GetNetworkStatusData, GetNetworkStatusResponses, GetPacketsData, GetPacketsResponses, GetProtocolsData, GetProtocolsResponses, GetProtocolStatsData, GetProtocolStatsErrors, GetProtocolStatsResponses, GetRoutingTableData, GetRoutingTableErrors, GetRoutingTableResponses, GetSettingsData, GetSettingsResponses, GetStatusData, GetStatusResponses, GetSystemStatusData, GetSystemStatusResponses, GetWifiDevicesData, GetWifiDevicesErrors, GetWifiDevicesResponses, LoginData, LoginErrors, LoginResponses, LogoutData, LogoutResponses, OptionsData, OptionsResponses, PacketsOptionsData, PacketsOptionsResponses, StatusOptionsData, StatusOptionsResponses, UpdateSettingsData, UpdateSettingsErrors, UpdateSettingsResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean> = Options2<TData, ThrowOnError> & {
     /**
@@ -155,13 +155,25 @@ export const deleteRoute = <ThrowOnError extends boolean = false>(options: Optio
 };
 
 /**
- * Get all devices
+ * Get all WIFI devices
  *
  * Retrieve list of all discovered devices in the mesh network
  */
-export const getDevices = <ThrowOnError extends boolean = false>(options?: Options<GetDevicesData, ThrowOnError>) => {
-    return (options?.client ?? client).get<GetDevicesResponses, GetDevicesErrors, ThrowOnError>({
+export const getWifiDevices = <ThrowOnError extends boolean = false>(options?: Options<GetWifiDevicesData, ThrowOnError>) => {
+    return (options?.client ?? client).get<GetWifiDevicesResponses, GetWifiDevicesErrors, ThrowOnError>({
         url: '/api/devices',
+        ...options
+    });
+};
+
+/**
+ * Get all BLE devices
+ *
+ * Retrieve list of all discovered BLE devices in the mesh network
+ */
+export const getBleDevices = <ThrowOnError extends boolean = false>(options?: Options<GetBleDevicesData, ThrowOnError>) => {
+    return (options?.client ?? client).get<GetBleDevicesResponses, GetBleDevicesErrors, ThrowOnError>({
+        url: '/api/devices/ble',
         ...options
     });
 };

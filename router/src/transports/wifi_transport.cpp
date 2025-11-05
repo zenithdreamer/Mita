@@ -367,6 +367,22 @@ namespace mita
             handlers_to_cleanup.clear();
         }
 
+        std::vector<WiFiClientHandler*> WiFiTransport::get_all_client_handlers() const
+        {
+            std::lock_guard<std::mutex> lock(clients_mutex_);
+            std::vector<WiFiClientHandler*> handlers;
+
+            for (const auto& device : client_handlers_)
+            {
+                if (device.second)
+                {
+                    handlers.push_back(device.second.get());
+                }
+            }
+
+            return handlers;
+        }
+
         //map key is now device_id
         WiFiClientHandler *WiFiTransport::find_client_handler(const std::string &device_id)
         {

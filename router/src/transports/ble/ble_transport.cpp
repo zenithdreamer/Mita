@@ -584,7 +584,11 @@ namespace mita
                     }
                 }
             }
-           
+
+            std::vector<std::shared_ptr<BLEDeviceHandler>> BLETransport::get_all_device_handlers() const
+            {
+                return device_registry_.get_all_devices();
+            }
 
             void BLETransport::cleanup_disconnected_devices()
             {

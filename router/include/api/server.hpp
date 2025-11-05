@@ -44,14 +44,18 @@ private:
   std::shared_ptr<mita::services::DeviceManagementService> m_deviceManager;
   std::shared_ptr<mita::AuthService> m_authService;
   std::shared_ptr<mita::SettingsService> m_settingsService;
+  std::shared_ptr<mita::transports::WiFiTransport> m_wifiTransport;
+  std::shared_ptr<mita::transports::ble::BLETransport> m_bleTransport;
   mita::core::MitaRouter* m_router;
   static constexpr size_t NUM_WORKER_THREADS = 4;
 
 public:
   ApiServer(std::shared_ptr<mita::services::PacketMonitorService> packetMonitor = nullptr,
             std::shared_ptr<mita::services::DeviceManagementService> deviceManager = nullptr,
-            mita::core::MitaRouter* router = nullptr)
-    : m_running(false), m_packetMonitor(packetMonitor), m_deviceManager(deviceManager), m_router(router) {
+            mita::core::MitaRouter* router = nullptr,
+            std::shared_ptr<mita::transports::WiFiTransport> wifiTransport = nullptr,
+            std::shared_ptr<mita::transports::ble::BLETransport> bleTransport = nullptr)
+    : m_running(false), m_packetMonitor(packetMonitor), m_deviceManager(deviceManager), m_router(router), m_wifiTransport(wifiTransport), m_bleTransport(bleTransport) {
     // Initialize authentication service
     try {
       m_authService = std::make_shared<mita::AuthService>("data/router.db");
@@ -98,7 +102,7 @@ public:
     auto routingController = RoutingController::createShared(objectMapper);
     router->addController(routingController);
 
-    auto devicesController = DevicesController::createShared(objectMapper);
+    auto devicesController = DevicesController::createShared(objectMapper, m_wifiTransport, m_bleTransport);
     router->addController(devicesController);
 
     auto protocolsController = ProtocolsController::createShared(objectMapper, m_deviceManager);

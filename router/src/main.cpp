@@ -16,6 +16,8 @@
 #include "core/logger.hpp"
 #include "api/server.hpp"
 #include "database/models.hpp"
+#include "transports/wifi_transport.hpp"
+#include "transports/ble/ble_transport.hpp"
 
 // Command line argument parsing
 #include <getopt.h>
@@ -369,10 +371,25 @@ int main(int argc, char* argv[]) {
 
         // Start HTTP API server
         logger->info("Starting HTTP API server...");
+
+        // Get transports from router
+        auto wifi_base = g_router->get_wifi_transport();
+        auto ble_base = g_router->get_ble_transport();
+        auto wifi_transport = wifi_base ? std::shared_ptr<mita::transports::WiFiTransport>(
+            dynamic_cast<mita::transports::WiFiTransport*>(wifi_base),
+            [](auto*){} 
+        ) : nullptr;
+        auto ble_transport = ble_base ? std::shared_ptr<mita::transports::ble::BLETransport>(
+            dynamic_cast<mita::transports::ble::BLETransport*>(ble_base),
+            [](auto*){}
+        ) : nullptr;
+
         g_apiServer = std::make_unique<ApiServer>(
             g_router->get_packet_monitor(),
             g_router->get_device_manager(),
-            g_router.get()  // Pass router pointer for dynamic transport management
+            g_router.get(),
+            wifi_transport,
+            ble_transport
         );
         g_apiServer->start("0.0.0.0", 8080);
 

@@ -50,6 +50,7 @@ public:
     bool send_packet(const std::string& device_id, const protocol::ProtocolPacket& packet) override;
     int broadcast_packet(const protocol::ProtocolPacket& packet) override;
     std::string get_connection_info() const override;
+    std::vector<WiFiClientHandler*> get_all_client_handlers() const;
 
 private:
     void accept_connections();
@@ -62,7 +63,7 @@ private:
     sockaddr_in server_addr_;
 
     // Client management
-    std::mutex clients_mutex_;
+    mutable std::mutex clients_mutex_;
     std::map<std::string, std::unique_ptr<WiFiClientHandler>> client_handlers_;
 
     // Threading

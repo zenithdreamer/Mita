@@ -47,6 +47,7 @@ namespace mita
                 bool send_packet(const std::string &device_id, const protocol::ProtocolPacket &packet) override;
                 int broadcast_packet(const protocol::ProtocolPacket &packet) override;
                 std::string get_connection_info() const override;
+                std::vector<std::shared_ptr<BLEDeviceHandler>> get_all_device_handlers() const;
 
             private:
                 bool initialize_backend();

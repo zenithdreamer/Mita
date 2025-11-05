@@ -422,30 +422,55 @@ export type DeleteRouteResponses = {
 
 export type DeleteRouteResponse = DeleteRouteResponses[keyof DeleteRouteResponses];
 
-export type GetDevicesData = {
+export type GetWifiDevicesData = {
     body?: never;
     path?: never;
     query?: never;
     url: '/api/devices';
 };
 
-export type GetDevicesErrors = {
+export type GetWifiDevicesErrors = {
     /**
      * Internal Server Error
      */
     500: ErrorDto;
 };
 
-export type GetDevicesError = GetDevicesErrors[keyof GetDevicesErrors];
+export type GetWifiDevicesError = GetWifiDevicesErrors[keyof GetWifiDevicesErrors];
 
-export type GetDevicesResponses = {
+export type GetWifiDevicesResponses = {
     /**
      * OK
      */
     200: DevicesDto;
 };
 
-export type GetDevicesResponse = GetDevicesResponses[keyof GetDevicesResponses];
+export type GetWifiDevicesResponse = GetWifiDevicesResponses[keyof GetWifiDevicesResponses];
+
+export type GetBleDevicesData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/devices/ble';
+};
+
+export type GetBleDevicesErrors = {
+    /**
+     * Internal Server Error
+     */
+    500: ErrorDto;
+};
+
+export type GetBleDevicesError = GetBleDevicesErrors[keyof GetBleDevicesErrors];
+
+export type GetBleDevicesResponses = {
+    /**
+     * OK
+     */
+    200: DevicesDto;
+};
+
+export type GetBleDevicesResponse = GetBleDevicesResponses[keyof GetBleDevicesResponses];
 
 export type GetDeviceData = {
     body?: never;

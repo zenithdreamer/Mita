@@ -749,5 +749,27 @@ namespace mita
             }
         }
 
+        core::TransportInterface* MitaRouter::get_wifi_transport()
+        {
+            std::lock_guard<std::mutex> lock(transports_mutex_);
+            auto it = transports_.find("wifi");
+            if (it != transports_.end())
+            {
+                return it->second.get();
+            }
+            return nullptr;
+        }
+
+        core::TransportInterface* MitaRouter::get_ble_transport()
+        {
+            std::lock_guard<std::mutex> lock(transports_mutex_);
+            auto it = transports_.find("ble");
+            if (it != transports_.end())
+            {
+                return it->second.get();
+            }
+            return nullptr;
+        }
+
     } // namespace core
 } // namespace mita

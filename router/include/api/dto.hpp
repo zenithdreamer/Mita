@@ -204,4 +204,40 @@ class ProtocolListDto : public oatpp::DTO {
   DTO_FIELD(Vector<Object<ProtocolInfoDto>>, protocols);
 };
 
+// Settings DTOs
+class SettingsDto : public oatpp::DTO {
+  DTO_INIT(SettingsDto, DTO)
+
+  DTO_FIELD_INFO(wifiEnabled) {
+    info->description = "WiFi transport enabled";
+  }
+  DTO_FIELD(Boolean, wifiEnabled);
+
+  DTO_FIELD_INFO(bleEnabled) {
+    info->description = "BLE transport enabled";
+  }
+  DTO_FIELD(Boolean, bleEnabled);
+
+  DTO_FIELD_INFO(zigbeeEnabled) {
+    info->description = "Zigbee transport enabled";
+  }
+  DTO_FIELD(Boolean, zigbeeEnabled);
+
+  DTO_FIELD_INFO(monitorEnabled) {
+    info->description = "Packet monitor enabled";
+  }
+  DTO_FIELD(Boolean, monitorEnabled);
+
+  DTO_FIELD(Int64, updatedAt);
+};
+
+class UpdateSettingsRequestDto : public oatpp::DTO {
+  DTO_INIT(UpdateSettingsRequestDto, DTO)
+
+  DTO_FIELD(Boolean, wifiEnabled);
+  DTO_FIELD(Boolean, bleEnabled);
+  DTO_FIELD(Boolean, zigbeeEnabled);
+  DTO_FIELD(Boolean, monitorEnabled);
+};
+
 #include OATPP_CODEGEN_END(DTO)

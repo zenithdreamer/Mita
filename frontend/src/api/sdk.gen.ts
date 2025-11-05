@@ -2,7 +2,7 @@
 
 import type { Client, Options as Options2, TDataShape } from './client';
 import { client } from './client.gen';
-import type { ClearPacketsData, ClearPacketsResponses, GetCurrentUserData, GetCurrentUserErrors, GetCurrentUserResponses, GetDeviceStatusData, GetDeviceStatusResponses, GetNetworkStatusData, GetNetworkStatusResponses, GetPacketsData, GetPacketsResponses, GetProtocolsData, GetProtocolsResponses, GetStatusData, GetStatusResponses, GetSystemStatusData, GetSystemStatusResponses, LoginData, LoginErrors, LoginResponses, LogoutData, LogoutResponses, OptionsData, OptionsResponses } from './types.gen';
+import type { ClearPacketsData, ClearPacketsResponses, GetCurrentUserData, GetCurrentUserErrors, GetCurrentUserResponses, GetDeviceStatusData, GetDeviceStatusResponses, GetNetworkStatusData, GetNetworkStatusResponses, GetPacketsData, GetPacketsResponses, GetProtocolsData, GetProtocolsResponses, GetSettingsData, GetSettingsResponses, GetStatusData, GetStatusResponses, GetSystemStatusData, GetSystemStatusResponses, LoginData, LoginErrors, LoginResponses, LogoutData, LogoutResponses, OptionsData, OptionsResponses, UpdateSettingsData, UpdateSettingsErrors, UpdateSettingsResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean> = Options2<TData, ThrowOnError> & {
     /**
@@ -97,6 +97,34 @@ export const getProtocols = <ThrowOnError extends boolean = false>(options?: Opt
     return (options?.client ?? client).get<GetProtocolsResponses, unknown, ThrowOnError>({
         url: '/api/protocols',
         ...options
+    });
+};
+
+/**
+ * Get transport settings
+ *
+ * Returns current enabled/disabled state of all transports
+ */
+export const getSettings = <ThrowOnError extends boolean = false>(options?: Options<GetSettingsData, ThrowOnError>) => {
+    return (options?.client ?? client).get<GetSettingsResponses, unknown, ThrowOnError>({
+        url: '/api/settings',
+        ...options
+    });
+};
+
+/**
+ * Update transport settings
+ *
+ * Enable or disable transports (WiFi, BLE, Zigbee) and apply changes immediately
+ */
+export const updateSettings = <ThrowOnError extends boolean = false>(options: Options<UpdateSettingsData, ThrowOnError>) => {
+    return (options.client ?? client).put<UpdateSettingsResponses, UpdateSettingsErrors, ThrowOnError>({
+        url: '/api/settings',
+        ...options,
+        headers: {
+            'Content-Type': 'application/json',
+            ...options.headers
+        }
     });
 };
 

@@ -1,21 +1,27 @@
-import { Wifi, Bluetooth, Radio, Network, Settings2 } from "lucide-react"
+import { useState, useEffect, useRef } from "react"
+import { Wifi, Bluetooth, Radio, Loader2 } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { useToast } from "@/hooks/use-toast"
+import { getSettings, updateSettings } from "@/api/sdk.gen"
+import type { UpdateSettingsRequestDto } from "@/api/types.gen"
 
 interface ProtocolConfigProps {
   name: string
   icon: React.ReactNode
-  status: boolean
+  enabled: boolean
   description: string
   channel?: string
   frequency?: string
   power?: string
+  onToggle: (enabled: boolean) => void
+  isLoading?: boolean
 }
 
-function ProtocolConfig({ name, icon, status, description, channel, frequency, power }: ProtocolConfigProps) {
+function ProtocolConfig({ name, icon, enabled, description, channel, frequency, power, onToggle, isLoading }: ProtocolConfigProps) {
   return (
     <Card>
       <CardHeader>
@@ -30,10 +36,21 @@ function ProtocolConfig({ name, icon, status, description, channel, frequency, p
             </div>
           </div>
           <div className="flex items-center space-x-2">
-            <Badge variant={status ? "default" : "secondary"}>
-              {status ? "Enabled" : "Disabled"}
-            </Badge>
-            <Switch checked={status} />
+            {isLoading ? (
+              <Badge variant="outline" className="gap-1">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                {enabled ? "Disabling..." : "Enabling..."}
+              </Badge>
+            ) : (
+              <Badge variant={enabled ? "default" : "secondary"}>
+                {enabled ? "Enabled" : "Disabled"}
+              </Badge>
+            )}
+            <Switch
+              checked={enabled}
+              onCheckedChange={onToggle}
+              disabled={isLoading}
+            />
           </div>
         </div>
       </CardHeader>
@@ -63,7 +80,118 @@ function ProtocolConfig({ name, icon, status, description, channel, frequency, p
   )
 }
 
+interface Settings {
+  wifiEnabled: boolean
+  bleEnabled: boolean
+  zigbeeEnabled: boolean
+}
+
+interface LoadingStates {
+  wifi: boolean
+  ble: boolean
+  zigbee: boolean
+}
+
 export function ProtocolsPage() {
+  const { toast } = useToast()
+  const [settings, setSettings] = useState<Settings>({
+    wifiEnabled: false,
+    bleEnabled: false,
+    zigbeeEnabled: false,
+  })
+  const [loadingStates, setLoadingStates] = useState<LoadingStates>({
+    wifi: false,
+    ble: false,
+    zigbee: false,
+  })
+  // Store current capture setting to preserve it when updating transports
+  const currentCaptureEnabled = useRef(false)
+
+  // Fetch settings on mount
+  useEffect(() => {
+    fetchSettings()
+  }, [])
+
+  const fetchSettings = async () => {
+    try {
+      const { data, error } = await getSettings()
+      if (error) {
+        throw new Error("Failed to fetch settings")
+      }
+      if (data) {
+        setSettings({
+          wifiEnabled: data.wifiEnabled ?? false,
+          bleEnabled: data.bleEnabled ?? false,
+          zigbeeEnabled: data.zigbeeEnabled ?? false,
+        })
+        // Store monitor setting to preserve it when updating transports
+        currentCaptureEnabled.current = data.monitorEnabled ?? false
+      }
+    } catch (error) {
+      console.error("Failed to fetch settings:", error)
+      toast({
+        title: "Error",
+        description: "Failed to load transport settings",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const updateTransportSettings = async (newSettings: Settings, transportType: keyof LoadingStates) => {
+    setLoadingStates(prev => ({ ...prev, [transportType]: true }))
+    try {
+      const requestBody: UpdateSettingsRequestDto = {
+        wifiEnabled: newSettings.wifiEnabled,
+        bleEnabled: newSettings.bleEnabled,
+        zigbeeEnabled: newSettings.zigbeeEnabled,
+        monitorEnabled: currentCaptureEnabled.current, // Preserve monitor setting
+      }
+
+      const { data, error } = await updateSettings({
+        body: requestBody,
+      })
+
+      if (error) {
+        throw new Error("Failed to update settings")
+      }
+
+      if (data) {
+        setSettings({
+          wifiEnabled: data.wifiEnabled ?? false,
+          bleEnabled: data.bleEnabled ?? false,
+          zigbeeEnabled: data.zigbeeEnabled ?? false,
+        })
+        toast({
+          title: "Settings Updated",
+          description: "Transport settings have been applied successfully and are now active.",
+        })
+      }
+    } catch (error) {
+      console.error("Failed to update settings:", error)
+      toast({
+        title: "Error",
+        description: "Failed to update transport settings",
+        variant: "destructive",
+      })
+      // Revert to previous settings
+      fetchSettings()
+    } finally {
+      setLoadingStates(prev => ({ ...prev, [transportType]: false }))
+    }
+  }
+
+  const handleWifiToggle = (enabled: boolean) => {
+    updateTransportSettings({ ...settings, wifiEnabled: enabled }, "wifi")
+  }
+
+  const handleBleToggle = (enabled: boolean) => {
+    updateTransportSettings({ ...settings, bleEnabled: enabled }, "ble")
+  }
+
+  const handleZigbeeToggle = (enabled: boolean) => {
+    updateTransportSettings({ ...settings, zigbeeEnabled: enabled }, "zigbee")
+  }
+
   return (
     <div className="space-y-6">
       <div>
@@ -83,20 +211,24 @@ export function ProtocolsPage() {
           <ProtocolConfig
             name="WiFi 6 (802.11ax)"
             icon={<Wifi className="h-5 w-5 text-primary" />}
-            status={true}
+            enabled={settings.wifiEnabled}
             description="High-speed wireless networking"
             channel="Auto (1-11)"
             frequency="2.4GHz / 5GHz"
             power="20 dBm"
+            onToggle={handleWifiToggle}
+            isLoading={loadingStates.wifi}
           />
           <ProtocolConfig
             name="Bluetooth Low Energy"
             icon={<Bluetooth className="h-5 w-5 text-primary" />}
-            status={true}
+            enabled={settings.bleEnabled}
             description="Low power wireless communication"
             channel="37-39"
             frequency="2.4GHz"
             power="4 dBm"
+            onToggle={handleBleToggle}
+            isLoading={loadingStates.ble}
           />
         </TabsContent>
 
@@ -104,41 +236,16 @@ export function ProtocolsPage() {
           <ProtocolConfig
             name="Zigbee 3.0"
             icon={<Radio className="h-5 w-5 text-primary" />}
-            status={true}
+            enabled={settings.zigbeeEnabled}
             description="Low-power mesh networking"
             channel="15"
             frequency="2.4GHz"
             power="8 dBm"
+            onToggle={handleZigbeeToggle}
+            isLoading={loadingStates.zigbee}
           />
         </TabsContent>
       </Tabs>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Protocol Statistics</CardTitle>
-          <CardDescription>Overall protocol performance metrics</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div className="text-center p-4 bg-secondary rounded-lg">
-              <div className="text-2xl font-bold">98.5%</div>
-              <div className="text-xs text-muted-foreground mt-1">WiFi Uptime</div>
-            </div>
-            <div className="text-center p-4 bg-secondary rounded-lg">
-              <div className="text-2xl font-bold">45ms</div>
-              <div className="text-xs text-muted-foreground mt-1">Avg Latency</div>
-            </div>
-            <div className="text-center p-4 bg-secondary rounded-lg">
-              <div className="text-2xl font-bold">12</div>
-              <div className="text-xs text-muted-foreground mt-1">Active Protocols</div>
-            </div>
-            <div className="text-center p-4 bg-secondary rounded-lg">
-              <div className="text-2xl font-bold">99.2%</div>
-              <div className="text-xs text-muted-foreground mt-1">Packet Success</div>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
     </div>
   )
 }

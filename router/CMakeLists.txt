@@ -163,6 +163,12 @@ if(NOT TARGET fmt::fmt)
     endif()
 endif()
 
+# Mark sqlite_orm include directories as SYSTEM to suppress warnings from the library
+get_target_property(SQLITE_ORM_INCLUDE_DIRS sqlite_orm::sqlite_orm INTERFACE_INCLUDE_DIRECTORIES)
+if(SQLITE_ORM_INCLUDE_DIRS)
+    target_include_directories(mita_router SYSTEM PRIVATE ${SQLITE_ORM_INCLUDE_DIRS})
+endif()
+
 # Link libraries
 target_link_libraries(mita_router
     Threads::Threads

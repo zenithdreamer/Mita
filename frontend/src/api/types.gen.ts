@@ -4,21 +4,6 @@ export type ClientOptions = {
     baseUrl: 'http://localhost:8080' | (string & {});
 };
 
-export type PacketInfoDto = {
-    id?: string;
-    timestamp?: number;
-    direction?: string;
-    sourceAddr?: string;
-    destAddr?: string;
-    messageType?: string;
-    payloadSize?: number;
-    transport?: string;
-    encrypted?: boolean;
-    rawData?: string;
-    decodedHeader?: string;
-    decodedPayload?: string;
-};
-
 export type StatusDto = {
     status: string;
     message: string;
@@ -99,6 +84,48 @@ export type NetworkStatsDto = {
 
 export type ProtocolListDto = {
     protocols?: Array<ProtocolInfoDto>;
+};
+
+export type PacketInfoDto = {
+    id?: string;
+    timestamp?: number;
+    direction?: string;
+    sourceAddr?: string;
+    destAddr?: string;
+    messageType?: string;
+    payloadSize?: number;
+    transport?: string;
+    encrypted?: boolean;
+    rawData?: string;
+    decodedHeader?: string;
+    decodedPayload?: string;
+};
+
+export type SettingsDto = {
+    /**
+     * WiFi transport enabled
+     */
+    wifiEnabled?: boolean;
+    /**
+     * BLE transport enabled
+     */
+    bleEnabled?: boolean;
+    /**
+     * Zigbee transport enabled
+     */
+    zigbeeEnabled?: boolean;
+    /**
+     * Packet monitor enabled
+     */
+    monitorEnabled?: boolean;
+    updatedAt?: number;
+};
+
+export type UpdateSettingsRequestDto = {
+    wifiEnabled?: boolean;
+    bleEnabled?: boolean;
+    zigbeeEnabled?: boolean;
+    monitorEnabled?: boolean;
 };
 
 export type LoginRequestDto = {
@@ -238,6 +265,47 @@ export type GetProtocolsResponses = {
 };
 
 export type GetProtocolsResponse = GetProtocolsResponses[keyof GetProtocolsResponses];
+
+export type GetSettingsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/settings';
+};
+
+export type GetSettingsResponses = {
+    /**
+     * OK
+     */
+    200: SettingsDto;
+};
+
+export type GetSettingsResponse = GetSettingsResponses[keyof GetSettingsResponses];
+
+export type UpdateSettingsData = {
+    body: UpdateSettingsRequestDto;
+    path?: never;
+    query?: never;
+    url: '/api/settings';
+};
+
+export type UpdateSettingsErrors = {
+    /**
+     * Internal Server Error
+     */
+    500: StatusDto;
+};
+
+export type UpdateSettingsError = UpdateSettingsErrors[keyof UpdateSettingsErrors];
+
+export type UpdateSettingsResponses = {
+    /**
+     * OK
+     */
+    200: SettingsDto;
+};
+
+export type UpdateSettingsResponse = UpdateSettingsResponses[keyof UpdateSettingsResponses];
 
 export type OptionsData = {
     body?: never;

@@ -169,6 +169,43 @@ export function DashboardPage() {
     return `${minutes}m`
   }
 
+  const formatSpeed = (speedMBps: number) => {
+    // Convert MB/s to bytes/s for accurate calculation
+    const bytesPerSec = speedMBps * 1024 * 1024
+
+    if (bytesPerSec >= 1073741824) {
+      // >= 1 GB/s
+      return `${(bytesPerSec / 1073741824).toFixed(2)} GB/s`
+    } else if (bytesPerSec >= 1048576) {
+      // >= 1 MB/s
+      return `${(bytesPerSec / 1048576).toFixed(2)} MB/s`
+    } else if (bytesPerSec >= 1024) {
+      // >= 1 KB/s
+      return `${(bytesPerSec / 1024).toFixed(2)} KB/s`
+    } else {
+      // < 1 KB/s
+      return `${bytesPerSec.toFixed(0)} B/s`
+    }
+  }
+
+  const formatBytes = (bytes: number) => {
+    if (bytes >= 1099511627776) {
+      // >= 1 TB
+      return `${(bytes / 1099511627776).toFixed(2)} TB`
+    } else if (bytes >= 1073741824) {
+      // >= 1 GB
+      return `${(bytes / 1073741824).toFixed(2)} GB`
+    } else if (bytes >= 1048576) {
+      // >= 1 MB
+      return `${(bytes / 1048576).toFixed(2)} MB`
+    } else if (bytes >= 1024) {
+      // >= 1 KB
+      return `${(bytes / 1024).toFixed(2)} KB`
+    } else {
+      return `${bytes} B`
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -209,7 +246,7 @@ export function DashboardPage() {
         <StatCard
           title="Data Throughput"
           value={networkStatus?.uploadSpeed !== undefined && networkStatus?.downloadSpeed !== undefined
-            ? `${(networkStatus.uploadSpeed + networkStatus.downloadSpeed).toFixed(1)} MB/s`
+            ? formatSpeed(networkStatus.uploadSpeed + networkStatus.downloadSpeed)
             : "..."}
           description="Current transfer rate"
           icon={<TrendingUp className="h-4 w-4 text-muted-foreground" />}
@@ -245,7 +282,7 @@ export function DashboardPage() {
                 <span className="text-sm font-medium">Memory Usage</span>
                 <span className="text-sm text-muted-foreground">
                   {systemStatus?.memoryUsed !== undefined && systemStatus?.memoryTotal !== undefined
-                    ? `${(systemStatus.memoryUsed / 1073741824).toFixed(1)} GB / ${(systemStatus.memoryTotal / 1073741824).toFixed(1)} GB`
+                    ? `${formatBytes(systemStatus.memoryUsed)} / ${formatBytes(systemStatus.memoryTotal)}`
                     : "..."}
                 </span>
               </div>
@@ -265,7 +302,7 @@ export function DashboardPage() {
                 <span className="text-sm font-medium">Storage</span>
                 <span className="text-sm text-muted-foreground">
                   {systemStatus?.storageUsed !== undefined && systemStatus?.storageTotal !== undefined
-                    ? `${(systemStatus.storageUsed / 1073741824).toFixed(1)} GB / ${(systemStatus.storageTotal / 1073741824).toFixed(1)} GB`
+                    ? `${formatBytes(systemStatus.storageUsed)} / ${formatBytes(systemStatus.storageTotal)}`
                     : "..."}
                 </span>
               </div>
@@ -306,13 +343,13 @@ export function DashboardPage() {
             <div className="flex justify-between items-center">
               <span className="text-sm text-muted-foreground">Upload</span>
               <span className="text-lg font-semibold">
-                {networkStatus?.uploadSpeed !== undefined ? `${networkStatus.uploadSpeed.toFixed(1)} MB/s` : "..."}
+                {networkStatus?.uploadSpeed !== undefined ? formatSpeed(networkStatus.uploadSpeed) : "..."}
               </span>
             </div>
             <div className="flex justify-between items-center">
               <span className="text-sm text-muted-foreground">Download</span>
               <span className="text-lg font-semibold">
-                {networkStatus?.downloadSpeed !== undefined ? `${networkStatus.downloadSpeed.toFixed(1)} MB/s` : "..."}
+                {networkStatus?.downloadSpeed !== undefined ? formatSpeed(networkStatus.downloadSpeed) : "..."}
               </span>
             </div>
           </CardContent>

@@ -5,12 +5,14 @@
 #include <string>
 #include <cstdio>
 #include <optional>
+#include <mutex>
 
 namespace mita {
 
 class AuthService {
 private:
     std::shared_ptr<db::Storage> storage_;
+    mutable std::mutex session_mutex_;  // Protect session operations
 
     void bootstrapAdminUser() {
         try {
@@ -165,16 +167,17 @@ public:
     };
 
     ValidateResult validateSession(const std::string& sessionToken) {
+        std::lock_guard<std::mutex> lock(session_mutex_);  // Thread-safe session access
         ValidateResult result;
 
         try {
             using namespace sqlite_orm;
-            
+
             // Find session by token
             auto sessions = storage_->get_all<db::Session>(
                 where(c(&db::Session::session_token) == sessionToken)
             );
-            
+
             if (sessions.empty()) {
                 result.valid = false;
                 return result;
@@ -185,9 +188,12 @@ public:
             // Check if session is expired
             int64_t now = db::getCurrentTimestamp();
             if (session.expires_at < now) {
-                // Delete expired session
-                storage_->remove<db::Session>(session.id);
+                // Don't delete here to avoid race conditions
+                // Let background cleanup handle it
                 result.valid = false;
+                printf("[AUTH] Session expired (token: %s...)\n",
+                       sessionToken.substr(0, 8).c_str());
+                fflush(stdout);
                 return result;
             }
 
@@ -209,18 +215,19 @@ public:
 
     // Logout (delete session)
     bool logout(const std::string& sessionToken) {
+        std::lock_guard<std::mutex> lock(session_mutex_);  // Thread-safe
         try {
             using namespace sqlite_orm;
-            
+
             auto sessions = storage_->get_all<db::Session>(
                 where(c(&db::Session::session_token) == sessionToken)
             );
-            
+
             if (!sessions.empty()) {
                 storage_->remove<db::Session>(sessions[0].id);
                 return true;
             }
-            
+
             return false;
         } catch (const std::exception& e) {
             printf("[AUTH] ERROR: Logout error: %s\n", e.what());
@@ -252,6 +259,7 @@ public:
 private:
     // Create session
     std::string createSession(int64_t userId, int64_t expiresInSeconds = 86400) {
+        std::lock_guard<std::mutex> lock(session_mutex_);  // Thread-safe
         // Generate secure random session token
         std::string sessionToken = db::PasswordHasher::generateSalt(64);
 
@@ -271,17 +279,27 @@ private:
 
     // Delete expired sessions
     void deleteExpiredSessions() {
+        std::lock_guard<std::mutex> lock(session_mutex_);  // Thread-safe
         try {
             using namespace sqlite_orm;
-            
+
             int64_t now = db::getCurrentTimestamp();
             storage_->remove_all<db::Session>(
                 where(c(&db::Session::expires_at) < now)
             );
+
+            printf("[AUTH] Cleaned up expired sessions\n");
+            fflush(stdout);
         } catch (const std::exception& e) {
             printf("[AUTH] ERROR: Failed to delete expired sessions: %s\n", e.what());
             fflush(stdout);
         }
+    }
+
+public:
+    // Public method to manually cleanup expired sessions
+    void cleanupExpiredSessions() {
+        deleteExpiredSessions();
     }
 };
 

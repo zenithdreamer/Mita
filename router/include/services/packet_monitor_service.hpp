@@ -10,6 +10,7 @@
 #include "protocol/protocol.hpp"
 #include "protocol/protocol_types.h"
 #include "core/transport_interface.hpp"
+#include "database/models.hpp"
 
 namespace mita
 {
@@ -47,7 +48,7 @@ namespace mita
         class PacketMonitorService
         {
         public:
-            PacketMonitorService(size_t max_packets = 1000);
+            PacketMonitorService(std::shared_ptr<mita::db::Storage> storage = nullptr, size_t max_packets = 1000);
             ~PacketMonitorService();
 
             // Capture packets
@@ -87,8 +88,11 @@ namespace mita
             std::string message_type_to_string(MessageType type) const;
             std::string decode_header(const protocol::ProtocolPacket &packet) const;
             std::string decode_payload(const protocol::ProtocolPacket &packet) const;
+            void save_packet_to_db(const CapturedPacket &packet);
+            std::string bytes_to_hex(const std::vector<uint8_t> &data) const;
 
             std::shared_ptr<core::Logger> logger_;
+            std::shared_ptr<mita::db::Storage> storage_;
             mutable std::mutex packets_mutex_;
             std::deque<CapturedPacket> packets_;
             size_t max_packets_;

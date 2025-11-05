@@ -9,6 +9,7 @@
 #include <vector>
 #include <mutex>
 #include <condition_variable>
+#include "database/models.hpp"
 
 // Forward declarations
 namespace mita
@@ -44,7 +45,7 @@ namespace mita
         class MitaRouter
         {
         public:
-            explicit MitaRouter(std::unique_ptr<RouterConfig> config);
+            explicit MitaRouter(std::unique_ptr<RouterConfig> config, std::shared_ptr<mita::db::Storage> storage = nullptr);
             ~MitaRouter();
 
             // Router lifecycle
@@ -58,12 +59,19 @@ namespace mita
             std::map<std::string, std::map<std::string, std::string>> get_connected_devices();
             std::map<std::string, uint64_t> get_statistics();
             std::map<std::string, std::string> get_router_info();
-            
+
             // Packet monitoring
             std::shared_ptr<services::PacketMonitorService> get_packet_monitor() const { return packet_monitor_; }
-            
+
             // Device management
             std::shared_ptr<services::DeviceManagementService> get_device_manager() const { return device_management_; }
+
+            // Dynamic transport management
+            bool start_wifi_transport();
+            bool stop_wifi_transport();
+            bool start_ble_transport();
+            bool stop_ble_transport();
+            bool is_transport_running(const std::string& transport_name) const;
 
         private:
             // Setup methods
@@ -79,6 +87,7 @@ namespace mita
 
             // Configuration and logging
             std::unique_ptr<RouterConfig> config_;
+            std::shared_ptr<mita::db::Storage> storage_;
             std::shared_ptr<Logger> logger_;
 
             // Core services
@@ -89,6 +98,7 @@ namespace mita
 
             // Transport layers
             std::map<std::string, std::unique_ptr<TransportInterface>> transports_;
+            mutable std::mutex transports_mutex_;  // Protect concurrent access to transports
 
             // WiFi Infrastructure
             std::unique_ptr<infrastructure::WiFiAccessPointManager> wifi_ap_manager_;

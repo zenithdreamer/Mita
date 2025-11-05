@@ -9,14 +9,17 @@ namespace mita
     namespace services
     {
 
-        PacketMonitorService::PacketMonitorService(size_t max_packets)
-            : logger_(core::get_logger("PacketMonitor")), 
+        PacketMonitorService::PacketMonitorService(std::shared_ptr<mita::db::Storage> storage, size_t max_packets)
+            : logger_(core::get_logger("PacketMonitor")),
+              storage_(storage),
               max_packets_(max_packets),
               metrics_start_time_(std::chrono::steady_clock::now()),
               last_metrics_update_(std::chrono::steady_clock::now())
         {
-            logger_->info("Packet Monitor Service initialized", 
-                         core::LogContext().add("max_packets", max_packets));
+            logger_->info("Packet Monitor Service initialized",
+                         core::LogContext()
+                            .add("max_packets", max_packets)
+                            .add("database_enabled", storage_ != nullptr));
         }
 
         PacketMonitorService::~PacketMonitorService()
@@ -39,36 +42,58 @@ namespace mita
                 captured.id = generate_packet_id();
                 captured.timestamp = std::chrono::system_clock::now();
                 captured.direction = direction;
-                captured.source_addr = packet.get_source_addr();
-                captured.dest_addr = packet.get_dest_addr();
-                captured.message_type = message_type_to_string(packet.get_message_type());
-                captured.payload_size = packet.get_payload().size();
-                captured.transport = (transport == core::TransportType::WIFI) ? "wifi" : "ble";
-                captured.encrypted = packet.is_encrypted();
-                captured.raw_data = packet.to_bytes();
-                captured.decoded_header = decode_header(packet);
-                captured.decoded_payload = decode_payload(packet);
+
+                // Safely extract packet info with bounds checking
+                try {
+                    captured.source_addr = packet.get_source_addr();
+                    captured.dest_addr = packet.get_dest_addr();
+                    captured.message_type = message_type_to_string(packet.get_message_type());
+                    captured.payload_size = packet.get_payload().size();
+                    captured.transport = (transport == core::TransportType::WIFI) ? "wifi" : "ble";
+                    captured.encrypted = packet.is_encrypted();
+
+                    // Copy raw data safely
+                    captured.raw_data = packet.to_bytes();
+
+                    // Decode header and payload with error handling
+                    captured.decoded_header = decode_header(packet);
+                    captured.decoded_payload = decode_payload(packet);
+                } catch (const std::exception &decode_error) {
+                    logger_->warning("Error decoding packet details",
+                                   core::LogContext().add("error", decode_error.what()));
+                    // Continue with partial data
+                    captured.decoded_header = "Error decoding header";
+                    captured.decoded_payload = "Error decoding payload";
+                }
 
                 // Update metrics based on direction
                 bool is_upload = (direction == "outbound" || direction == "forwarded");
                 update_metrics(captured.payload_size + 16, is_upload); // +16 for header overhead
 
-                std::lock_guard<std::mutex> lock(packets_mutex_);
-                
-                // Add to front (most recent first)
-                packets_.push_front(captured);
-
-                // Remove oldest if exceeding limit
-                while (packets_.size() > max_packets_)
-                {
-                    packets_.pop_back();
-                }
-
+                // Log before moving
                 logger_->debug("Captured packet",
                              core::LogContext()
                                  .add("id", captured.id)
                                  .add("direction", direction)
                                  .add("type", captured.message_type));
+
+                // Save to database if storage is available
+                if (storage_) {
+                    save_packet_to_db(captured);
+                }
+
+                {
+                    std::lock_guard<std::mutex> lock(packets_mutex_);
+
+                    // Add to front (most recent first)
+                    packets_.push_front(std::move(captured)); // Use move semantics
+
+                    // Remove oldest if exceeding limit
+                    while (packets_.size() > max_packets_)
+                    {
+                        packets_.pop_back();
+                    }
+                }
             }
             catch (const std::exception &e)
             {
@@ -184,77 +209,97 @@ namespace mita
 
         std::string PacketMonitorService::decode_header(const protocol::ProtocolPacket &packet) const
         {
-            std::ostringstream oss;
-            oss << "Version: " << static_cast<int>(packet.get_version()) << "\n";
-            oss << "Flags: 0x" << std::hex << std::setw(2) << std::setfill('0') 
-                << static_cast<int>(packet.get_flags()) << std::dec << "\n";
-            oss << "Message Type: " << message_type_to_string(packet.get_message_type()) << "\n";
-            oss << "Source Address: 0x" << std::hex << std::setw(4) << std::setfill('0') 
-                << packet.get_source_addr() << std::dec << "\n";
-            oss << "Dest Address: 0x" << std::hex << std::setw(4) << std::setfill('0') 
-                << packet.get_dest_addr() << std::dec << "\n";
-            oss << "Payload Length: " << packet.get_payload().size() << " bytes\n";
-            oss << "Checksum: 0x" << std::hex << std::setw(2) << std::setfill('0') 
-                << static_cast<int>(packet.get_checksum()) << std::dec << "\n";
-            oss << "Sequence Number: " << packet.get_sequence_number() << "\n";
-            oss << "TTL: " << static_cast<int>(packet.get_ttl()) << "\n";
-            oss << "Priority: " << static_cast<int>(packet.get_priority()) << "\n";
-            oss << "Fragment ID: " << packet.get_fragment_id() << "\n";
-            oss << "Timestamp: " << packet.get_timestamp() << "\n";
-            oss << "Encrypted: " << (packet.is_encrypted() ? "Yes" : "No") << "\n";
-            oss << "Fragmented: " << (packet.is_fragmented() ? "Yes" : "No");
+            try {
+                std::ostringstream oss;
+                oss << "Version: " << static_cast<int>(packet.get_version()) << "\n";
+                oss << "Flags: 0x" << std::hex << std::setw(2) << std::setfill('0')
+                    << static_cast<int>(packet.get_flags()) << std::dec << "\n";
+                oss << "Message Type: " << message_type_to_string(packet.get_message_type()) << "\n";
+                oss << "Source Address: 0x" << std::hex << std::setw(4) << std::setfill('0')
+                    << packet.get_source_addr() << std::dec << "\n";
+                oss << "Dest Address: 0x" << std::hex << std::setw(4) << std::setfill('0')
+                    << packet.get_dest_addr() << std::dec << "\n";
+                oss << "Payload Length: " << packet.get_payload().size() << " bytes\n";
+                oss << "Checksum: 0x" << std::hex << std::setw(2) << std::setfill('0')
+                    << static_cast<int>(packet.get_checksum()) << std::dec << "\n";
+                oss << "Sequence Number: " << packet.get_sequence_number() << "\n";
+                oss << "TTL: " << static_cast<int>(packet.get_ttl()) << "\n";
+                oss << "Priority: " << static_cast<int>(packet.get_priority()) << "\n";
+                oss << "Fragment ID: " << packet.get_fragment_id() << "\n";
+                oss << "Timestamp: " << packet.get_timestamp() << "\n";
+                oss << "Encrypted: " << (packet.is_encrypted() ? "Yes" : "No") << "\n";
+                oss << "Fragmented: " << (packet.is_fragmented() ? "Yes" : "No");
 
-            return oss.str();
+                return oss.str();
+            } catch (const std::exception &e) {
+                return std::string("Error decoding header: ") + e.what();
+            }
         }
 
         std::string PacketMonitorService::decode_payload(const protocol::ProtocolPacket &packet) const
         {
-            const auto &payload = packet.get_payload();
+            try {
+                const auto &payload = packet.get_payload();
 
-            if (payload.empty())
-            {
-                return "Empty payload";
+                if (payload.empty())
+                {
+                    return "Empty payload";
+                }
+
+                std::ostringstream oss;
+
+                // Limit payload decoding to prevent huge strings (max 1KB for display)
+                size_t display_size = std::min(payload.size(), size_t(1024));
+
+                // Hex dump
+                oss << "Hex dump (" << payload.size() << " bytes";
+                if (display_size < payload.size()) {
+                    oss << ", showing first " << display_size;
+                }
+                oss << "):\n";
+
+                for (size_t i = 0; i < display_size; ++i)
+                {
+                    if (i > 0 && i % 16 == 0)
+                    {
+                        oss << "\n";
+                    }
+                    else if (i > 0 && i % 8 == 0)
+                    {
+                        oss << "  ";
+                    }
+                    else if (i > 0)
+                    {
+                        oss << " ";
+                    }
+                    oss << std::hex << std::setw(2) << std::setfill('0')
+                        << static_cast<int>(payload[i]);
+                }
+                oss << std::dec << "\n\n";
+
+                // ASCII representation
+                oss << "ASCII (printable only):\n";
+                for (size_t i = 0; i < display_size; ++i)
+                {
+                    char c = static_cast<char>(payload[i]);
+                    if (c >= 32 && c <= 126)
+                    {
+                        oss << c;
+                    }
+                    else
+                    {
+                        oss << '.';
+                    }
+                }
+
+                if (display_size < payload.size()) {
+                    oss << "\n... (" << (payload.size() - display_size) << " more bytes)";
+                }
+
+                return oss.str();
+            } catch (const std::exception &e) {
+                return std::string("Error decoding payload: ") + e.what();
             }
-
-            std::ostringstream oss;
-
-            // Hex dump
-            oss << "Hex dump (" << payload.size() << " bytes):\n";
-            for (size_t i = 0; i < payload.size(); ++i)
-            {
-                if (i > 0 && i % 16 == 0)
-                {
-                    oss << "\n";
-                }
-                else if (i > 0 && i % 8 == 0)
-                {
-                    oss << "  ";
-                }
-                else if (i > 0)
-                {
-                    oss << " ";
-                }
-                oss << std::hex << std::setw(2) << std::setfill('0') 
-                    << static_cast<int>(payload[i]);
-            }
-            oss << std::dec << "\n\n";
-
-            // ASCII representation
-            oss << "ASCII (printable only):\n";
-            for (size_t i = 0; i < payload.size(); ++i)
-            {
-                char c = static_cast<char>(payload[i]);
-                if (c >= 32 && c <= 126)
-                {
-                    oss << c;
-                }
-                else
-                {
-                    oss << '.';
-                }
-            }
-
-            return oss.str();
         }
 
         void PacketMonitorService::update_metrics(size_t bytes, bool is_upload)
@@ -330,6 +375,54 @@ namespace mita
             metrics.last_update = last_metrics_update_;
             
             return metrics;
+        }
+
+        void PacketMonitorService::save_packet_to_db(const CapturedPacket &packet)
+        {
+            try {
+                using namespace sqlite_orm;
+
+                // Convert timestamp to milliseconds
+                auto timestamp_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    packet.timestamp.time_since_epoch()
+                ).count();
+
+                // Create database packet record
+                mita::db::MonitoredPacket db_packet;
+                db_packet.packet_id = packet.id;
+                db_packet.timestamp = timestamp_ms;
+                db_packet.direction = packet.direction;
+                db_packet.source_addr = packet.source_addr;
+                db_packet.dest_addr = packet.dest_addr;
+                db_packet.message_type = packet.message_type;
+                db_packet.payload_size = packet.payload_size;
+                db_packet.transport = packet.transport;
+                db_packet.encrypted = packet.encrypted ? 1 : 0;
+                db_packet.raw_data = bytes_to_hex(packet.raw_data);
+                db_packet.decoded_header = packet.decoded_header;
+                db_packet.decoded_payload = packet.decoded_payload;
+
+                // Insert into database
+                storage_->insert(db_packet);
+
+                logger_->debug("Saved packet to database",
+                             core::LogContext().add("packet_id", packet.id));
+            } catch (const std::exception &e) {
+                logger_->error("Failed to save packet to database",
+                             core::LogContext()
+                                .add("packet_id", packet.id)
+                                .add("error", e.what()));
+            }
+        }
+
+        std::string PacketMonitorService::bytes_to_hex(const std::vector<uint8_t> &data) const
+        {
+            std::ostringstream oss;
+            for (size_t i = 0; i < data.size(); ++i) {
+                oss << std::hex << std::setw(2) << std::setfill('0')
+                    << static_cast<int>(data[i]);
+            }
+            return oss.str();
         }
 
     } // namespace services

@@ -50,10 +50,64 @@ struct Session {
           expires_at(expires_at), created_at(created_at) {}
 };
 
+// Monitored packet entity for sqlite_orm
+struct MonitoredPacket {
+    int64_t id;
+    std::string packet_id;  // e.g., "pkt_1234567890_0"
+    int64_t timestamp;      // Unix timestamp in milliseconds
+    std::string direction;  // "inbound", "outbound", "forwarded"
+    int source_addr;
+    int dest_addr;
+    std::string message_type;
+    int payload_size;
+    std::string transport;  // "wifi" or "ble"
+    int encrypted;          // 0 or 1
+    std::string raw_data;   // Hex-encoded raw packet data
+    std::string decoded_header;
+    std::string decoded_payload;
+
+    // Default constructor
+    MonitoredPacket() : id(0), timestamp(0), source_addr(0), dest_addr(0),
+                        payload_size(0), encrypted(0) {}
+
+    // Constructor with parameters
+    MonitoredPacket(int64_t id, const std::string& packet_id, int64_t timestamp,
+                   const std::string& direction, int source_addr, int dest_addr,
+                   const std::string& message_type, int payload_size,
+                   const std::string& transport, int encrypted,
+                   const std::string& raw_data, const std::string& decoded_header,
+                   const std::string& decoded_payload)
+        : id(id), packet_id(packet_id), timestamp(timestamp), direction(direction),
+          source_addr(source_addr), dest_addr(dest_addr), message_type(message_type),
+          payload_size(payload_size), transport(transport), encrypted(encrypted),
+          raw_data(raw_data), decoded_header(decoded_header), decoded_payload(decoded_payload) {}
+};
+
+// Settings entity for sqlite_orm
+struct Settings {
+    int64_t id;
+    int wifi_enabled;
+    int ble_enabled;
+    int zigbee_enabled;
+    int monitor_enabled;  // Packet monitor enabled/disabled
+    int64_t updated_at;
+
+    // Default constructor - WiFi enabled by default, monitor disabled
+    Settings() : id(1), wifi_enabled(1), ble_enabled(0), zigbee_enabled(0),
+                 monitor_enabled(0), updated_at(0) {}
+
+    // Constructor with parameters
+    Settings(int64_t id, int wifi_enabled, int ble_enabled, int zigbee_enabled,
+             int monitor_enabled, int64_t updated_at)
+        : id(id), wifi_enabled(wifi_enabled), ble_enabled(ble_enabled),
+          zigbee_enabled(zigbee_enabled), monitor_enabled(monitor_enabled),
+          updated_at(updated_at) {}
+};
+
 // Define the storage schema using sqlite_orm
 inline auto initStorage(const std::string& path) {
     using namespace sqlite_orm;
-    
+
     return make_storage(
         path,
         make_table(
@@ -72,6 +126,31 @@ inline auto initStorage(const std::string& path) {
             make_column("session_token", &Session::session_token, unique()),
             make_column("expires_at", &Session::expires_at),
             make_column("created_at", &Session::created_at)
+        ),
+        make_table(
+            "settings",
+            make_column("id", &Settings::id, primary_key()),
+            make_column("wifi_enabled", &Settings::wifi_enabled, default_value(0)),
+            make_column("ble_enabled", &Settings::ble_enabled, default_value(0)),
+            make_column("zigbee_enabled", &Settings::zigbee_enabled, default_value(0)),
+            make_column("monitor_enabled", &Settings::monitor_enabled, default_value(0)),
+            make_column("updated_at", &Settings::updated_at)
+        ),
+        make_table(
+            "monitored_packets",
+            make_column("id", &MonitoredPacket::id, primary_key().autoincrement()),
+            make_column("packet_id", &MonitoredPacket::packet_id, unique()),
+            make_column("timestamp", &MonitoredPacket::timestamp),
+            make_column("direction", &MonitoredPacket::direction),
+            make_column("source_addr", &MonitoredPacket::source_addr),
+            make_column("dest_addr", &MonitoredPacket::dest_addr),
+            make_column("message_type", &MonitoredPacket::message_type),
+            make_column("payload_size", &MonitoredPacket::payload_size),
+            make_column("transport", &MonitoredPacket::transport),
+            make_column("encrypted", &MonitoredPacket::encrypted),
+            make_column("raw_data", &MonitoredPacket::raw_data),
+            make_column("decoded_header", &MonitoredPacket::decoded_header),
+            make_column("decoded_payload", &MonitoredPacket::decoded_payload)
         )
     );
 }

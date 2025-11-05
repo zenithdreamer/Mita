@@ -15,6 +15,7 @@
 #include "core/config.hpp"
 #include "core/logger.hpp"
 #include "api/server.hpp"
+#include "database/models.hpp"
 
 // Command line argument parsing
 #include <getopt.h>
@@ -81,8 +82,6 @@ void print_usage(const char* program_name) {
     std::cout << "  -c, --config FILE        Configuration file path (default: router_config.json)\n";
     std::cout << "  -v, --verbose            Increase verbosity (-v for INFO, -vv for DEBUG)\n";
     std::cout << "  -l, --log-file FILE      Log to file instead of console\n";
-    std::cout << "  -W, --wifi-only          Enable only WiFi transport\n";
-    std::cout << "  -B, --ble-only           Enable only BLE transport\n";
     std::cout << "  -D, --no-setup           Skip WiFi AP setup (for development)\n";
     std::cout << "  -s, --status-interval N  Status reporting interval in seconds\n";
     std::cout << "  -h, --help               Show this help message\n";
@@ -92,8 +91,6 @@ void print_usage(const char* program_name) {
     std::cout << "  " << program_name << " -c custom_config.json    # Use custom configuration\n";
     std::cout << "  " << program_name << " -v                       # Verbose logging\n";
     std::cout << "  " << program_name << " -vv                      # Debug logging\n";
-    std::cout << "  " << program_name << " --wifi-only              # Enable only WiFi transport\n";
-    std::cout << "  " << program_name << " --ble-only               # Enable only BLE transport\n";
     std::cout << std::endl;
 }
 
@@ -113,8 +110,6 @@ struct Arguments {
     std::string config_file = "router_config.json";
     int verbosity = 0;
     std::string log_file;
-    bool wifi_only = false;
-    bool ble_only = false;
     bool no_setup = false;
     int status_interval = -1;
     bool help = false;
@@ -128,8 +123,6 @@ Arguments parse_arguments(int argc, char* argv[]) {
         {"config",          required_argument, 0, 'c'},
         {"verbose",         no_argument,       0, 'v'},
         {"log-file",        required_argument, 0, 'l'},
-        {"wifi-only",       no_argument,       0, 'W'},
-        {"ble-only",        no_argument,       0, 'B'},
         {"no-setup",        no_argument,       0, 'D'},
         {"status-interval", required_argument, 0, 's'},
         {"help",            no_argument,       0, 'h'},
@@ -140,7 +133,7 @@ Arguments parse_arguments(int argc, char* argv[]) {
     int c;
     int option_index = 0;
 
-    while ((c = getopt_long(argc, argv, "c:vl:WBDs:h", long_options, &option_index)) != -1) {
+    while ((c = getopt_long(argc, argv, "c:vl:Ds:h", long_options, &option_index)) != -1) {
         switch (c) {
             case 'c':
                 args.config_file = optarg;
@@ -150,12 +143,6 @@ Arguments parse_arguments(int argc, char* argv[]) {
                 break;
             case 'l':
                 args.log_file = optarg;
-                break;
-            case 'W':
-                args.wifi_only = true;
-                break;
-            case 'B':
-                args.ble_only = true;
                 break;
             case 'D':
                 args.no_setup = true;
@@ -167,7 +154,7 @@ Arguments parse_arguments(int argc, char* argv[]) {
                 args.help = true;
                 break;
             case 0:
-                if (option_index == 9) { // --version
+                if (option_index == 6) { // --version
                     args.version = true;
                 }
                 break;
@@ -283,17 +270,42 @@ int main(int argc, char* argv[]) {
             return 1;
         }
 
-        // Apply command-line overrides
-        if (args.wifi_only) {
-            config->wifi.enabled = true;
-            config->ble.enabled = false;
-            logger->info("WiFi-only mode enabled");
-        }
+        // Load transport settings from database
+        try {
+            auto storage = std::make_shared<db::Storage>(db::initStorage("data/router.db"));
+            storage->sync_schema();
 
-        if (args.ble_only) {
-            config->wifi.enabled = false;
-            config->ble.enabled = true;
-            logger->info("BLE-only mode enabled");
+            // Check if settings exist, if not create default
+            using namespace sqlite_orm;
+            auto settingsCount = storage->count<db::Settings>();
+            if (settingsCount == 0) {
+                logger->info("Creating default settings");
+                db::Settings defaultSettings;
+                defaultSettings.id = 1;
+                defaultSettings.wifi_enabled = 0;
+                defaultSettings.ble_enabled = 0;
+                defaultSettings.zigbee_enabled = 0;
+                defaultSettings.updated_at = db::getCurrentTimestamp();
+                storage->insert(defaultSettings);
+            }
+
+            // Load settings from database
+            auto settings = storage->get_all<db::Settings>(where(c(&db::Settings::id) == 1));
+            if (!settings.empty()) {
+                // Apply database settings to config
+                config->wifi.enabled = settings[0].wifi_enabled != 0;
+                config->ble.enabled = settings[0].ble_enabled != 0;
+                bool monitor_enabled = settings[0].monitor_enabled != 0;
+                logger->info("Loaded transport settings from database",
+                            core::LogContext()
+                                .add("wifi_enabled", config->wifi.enabled)
+                                .add("ble_enabled", config->ble.enabled)
+                                .add("zigbee_enabled", settings[0].zigbee_enabled != 0)
+                                .add("monitor_enabled", monitor_enabled));
+            }
+        } catch (const std::exception& e) {
+            logger->warning("Failed to load settings from database, using config file defaults",
+                           core::LogContext().add("error", e.what()));
         }
 
         if (args.no_setup) {
@@ -314,22 +326,53 @@ int main(int argc, char* argv[]) {
         // Setup signal handlers
         setup_signal_handlers();
 
-        // Create and start router
+        // Initialize database storage first
+        std::shared_ptr<db::Storage> storage;
+        try {
+            storage = std::make_shared<db::Storage>(db::initStorage("data/router.db"));
+            logger->info("Database storage initialized successfully");
+        } catch (const std::exception& e) {
+            logger->error("Failed to initialize database storage",
+                         core::LogContext().add("error", e.what()));
+            return 1;
+        }
+
+        // Create and start router with database storage
         logger->info("Starting Mita Router...",
                      core::LogContext().add("router_id", config->router_id).add("config_file", args.config_file));
 
-        g_router = std::make_unique<core::MitaRouter>(std::move(config));
+        g_router = std::make_unique<core::MitaRouter>(std::move(config), storage);
 
         if (!g_router->start()) {
             logger->error("Failed to start router");
             return 1;
         }
 
+        // Apply packet monitor setting from database
+        try {
+            using namespace sqlite_orm;
+            auto settings = storage->get_all<db::Settings>(where(c(&db::Settings::id) == 1));
+            if (!settings.empty() && g_router->get_packet_monitor()) {
+                bool monitor_enabled = settings[0].monitor_enabled != 0;
+                if (monitor_enabled) {
+                    g_router->get_packet_monitor()->enable();
+                    logger->info("Packet monitor enabled");
+                } else {
+                    g_router->get_packet_monitor()->disable();
+                    logger->info("Packet monitor disabled");
+                }
+            }
+        } catch (const std::exception& e) {
+            logger->warning("Failed to apply packet monitor setting",
+                           core::LogContext().add("error", e.what()));
+        }
+
         // Start HTTP API server
         logger->info("Starting HTTP API server...");
         g_apiServer = std::make_unique<ApiServer>(
             g_router->get_packet_monitor(),
-            g_router->get_device_manager()
+            g_router->get_device_manager(),
+            g_router.get()  // Pass router pointer for dynamic transport management
         );
         g_apiServer->start("0.0.0.0", 8080);
 

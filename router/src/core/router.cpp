@@ -16,8 +16,8 @@ namespace mita
     namespace core
     {
 
-        MitaRouter::MitaRouter(std::unique_ptr<RouterConfig> config)
-            : config_(std::move(config)), logger_(get_logger("MitaRouter")), start_time_(std::chrono::steady_clock::now())
+        MitaRouter::MitaRouter(std::unique_ptr<RouterConfig> config, std::shared_ptr<mita::db::Storage> storage)
+            : config_(std::move(config)), storage_(storage), logger_(get_logger("MitaRouter")), start_time_(std::chrono::steady_clock::now())
         {
 
             if (!config_)
@@ -26,7 +26,11 @@ namespace mita
             }
 
             logger_->info("Mita Router initialized",
-                          LogContext().add("router_id", config_->router_id).add("wifi_enabled", true).add("ble_enabled", true));
+                          LogContext()
+                            .add("router_id", config_->router_id)
+                            .add("wifi_enabled", true)
+                            .add("ble_enabled", true)
+                            .add("database_enabled", storage_ != nullptr));
         }
 
         MitaRouter::~MitaRouter()
@@ -50,7 +54,7 @@ namespace mita
                 statistics_service_ = std::make_unique<services::StatisticsService>();
                 device_management_ = std::make_shared<services::DeviceManagementService>(
                     *routing_service_, *statistics_service_);
-                packet_monitor_ = std::make_shared<services::PacketMonitorService>(1000); // Keep last 1000 packets
+                packet_monitor_ = std::make_shared<services::PacketMonitorService>(storage_, 1000); // Keep last 1000 packets
 
                 // Connect packet monitor to services
                 routing_service_->set_packet_monitor(packet_monitor_);
@@ -101,9 +105,7 @@ namespace mita
 
                 if (!any_transport_started)
                 {
-                    logger_->error("No transports started successfully");
-                    stop();
-                    return false;
+                    logger_->warning("No transports enabled - router running in configuration-only mode");
                 }
 
                 // Start background tasks
@@ -368,6 +370,7 @@ namespace mita
 
                 if (wifi_transport->start())
                 {
+                    std::lock_guard<std::mutex> lock(transports_mutex_);
                     transports_["wifi"] = std::move(wifi_transport);
                     logger_->info("WiFi transport setup complete");
                     return true;
@@ -398,6 +401,88 @@ namespace mita
             }
         }
 
+        bool MitaRouter::start_wifi_transport()
+        {
+            if (!running_)
+            {
+                logger_->warning("Cannot start WiFi transport: router not running");
+                return false;
+            }
+
+            std::lock_guard<std::mutex> lock(transports_mutex_);
+
+            // Check if WiFi is already running
+            if (transports_.find("wifi") != transports_.end())
+            {
+                logger_->info("WiFi transport is already running");
+                return true;
+            }
+
+            logger_->info("Starting WiFi transport dynamically...");
+
+            // Temporarily enable WiFi in config
+            config_->wifi.enabled = true;
+
+            // Release lock to avoid deadlock when calling setup
+            transports_mutex_.unlock();
+            bool success = setup_wifi_transport();
+            transports_mutex_.lock();
+
+            if (success)
+            {
+                logger_->info("WiFi transport started successfully");
+            }
+            else
+            {
+                logger_->error("Failed to start WiFi transport");
+                config_->wifi.enabled = false;
+            }
+
+            return success;
+        }
+
+        bool MitaRouter::stop_wifi_transport()
+        {
+            std::lock_guard<std::mutex> lock(transports_mutex_);
+
+            auto it = transports_.find("wifi");
+            if (it == transports_.end())
+            {
+                logger_->info("WiFi transport is not running");
+                return true;
+            }
+
+            logger_->info("Stopping WiFi transport...");
+
+            try
+            {
+                // Stop the transport
+                it->second->stop();
+
+                // Remove from transports map
+                transports_.erase(it);
+
+                // Stop WiFi Access Point
+                if (wifi_ap_manager_)
+                {
+                    wifi_ap_manager_->teardown_hotspot();
+                    wifi_ap_manager_.reset();
+                }
+
+                // Update config
+                config_->wifi.enabled = false;
+
+                logger_->info("WiFi transport stopped successfully");
+                return true;
+            }
+            catch (const std::exception &e)
+            {
+                logger_->error("Error stopping WiFi transport",
+                               LogContext().add("error", e.what()));
+                return false;
+            }
+        }
+
         bool MitaRouter::setup_ble_transport()
         {
             // Check if BLE is enabled in configuration
@@ -417,6 +502,7 @@ namespace mita
 
                 if (ble_transport->start())
                 {
+                    std::lock_guard<std::mutex> lock(transports_mutex_);
                     transports_["ble"] = std::move(ble_transport);
                     logger_->info("BLE transport started successfully");
                     return true;
@@ -433,6 +519,87 @@ namespace mita
                                LogContext().add("error", e.what()));
                 return false;
             }
+        }
+
+        bool MitaRouter::start_ble_transport()
+        {
+            if (!running_)
+            {
+                logger_->warning("Cannot start BLE transport: router not running");
+                return false;
+            }
+
+            std::lock_guard<std::mutex> lock(transports_mutex_);
+
+            // Check if BLE is already running
+            if (transports_.find("ble") != transports_.end())
+            {
+                logger_->info("BLE transport is already running");
+                return true;
+            }
+
+            logger_->info("Starting BLE transport dynamically...");
+
+            // Temporarily enable BLE in config
+            config_->ble.enabled = true;
+
+            // Release lock to avoid deadlock when calling setup
+            transports_mutex_.unlock();
+            bool success = setup_ble_transport();
+            transports_mutex_.lock();
+
+            if (success)
+            {
+                logger_->info("BLE transport started successfully");
+            }
+            else
+            {
+                logger_->error("Failed to start BLE transport");
+                config_->ble.enabled = false;
+            }
+
+            return success;
+        }
+
+        bool MitaRouter::stop_ble_transport()
+        {
+            std::lock_guard<std::mutex> lock(transports_mutex_);
+
+            auto it = transports_.find("ble");
+            if (it == transports_.end())
+            {
+                logger_->info("BLE transport is not running");
+                return true;
+            }
+
+            logger_->info("Stopping BLE transport...");
+
+            try
+            {
+                // Stop the transport
+                it->second->stop();
+
+                // Remove from transports map
+                transports_.erase(it);
+
+                // Update config
+                config_->ble.enabled = false;
+
+                logger_->info("BLE transport stopped successfully");
+                return true;
+            }
+            catch (const std::exception &e)
+            {
+                logger_->error("Error stopping BLE transport",
+                               LogContext().add("error", e.what()));
+                return false;
+            }
+        }
+
+        bool MitaRouter::is_transport_running(const std::string& transport_name) const
+        {
+            std::lock_guard<std::mutex> lock(transports_mutex_);
+            return transports_.find(transport_name) != transports_.end();
         }
 
         void MitaRouter::start_background_tasks()

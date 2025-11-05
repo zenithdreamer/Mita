@@ -13,30 +13,47 @@
 #include "services/packet_monitor_service.hpp"
 #include "services/device_management_service.hpp"
 #include "services/auth_service.hpp"
+#include "services/settings_service.hpp"
 #include <memory>
 #include <thread>
 #include <chrono>
 #include <vector>
 #include <atomic>
 
+// Forward declaration
+namespace mita {
+namespace core {
+class MitaRouter;
+}
+}
+
 class ApiServer {
 private:
   std::shared_ptr<oatpp::network::tcp::server::ConnectionProvider> m_connectionProvider;
   std::shared_ptr<oatpp::web::server::HttpConnectionHandler> m_connectionHandler;
   std::vector<std::thread> m_workerThreads;
+  std::thread m_cleanupThread;
   std::atomic<bool> m_running;
   std::shared_ptr<mita::services::PacketMonitorService> m_packetMonitor;
   std::shared_ptr<mita::services::DeviceManagementService> m_deviceManager;
   std::shared_ptr<mita::AuthService> m_authService;
+  std::shared_ptr<mita::SettingsService> m_settingsService;
+  mita::core::MitaRouter* m_router;
   static constexpr size_t NUM_WORKER_THREADS = 4;
 
 public:
   ApiServer(std::shared_ptr<mita::services::PacketMonitorService> packetMonitor = nullptr,
-            std::shared_ptr<mita::services::DeviceManagementService> deviceManager = nullptr)
-    : m_running(false), m_packetMonitor(packetMonitor), m_deviceManager(deviceManager) {
+            std::shared_ptr<mita::services::DeviceManagementService> deviceManager = nullptr,
+            mita::core::MitaRouter* router = nullptr)
+    : m_running(false), m_packetMonitor(packetMonitor), m_deviceManager(deviceManager), m_router(router) {
     // Initialize authentication service
     try {
       m_authService = std::make_shared<mita::AuthService>("data/router.db");
+
+      // Initialize settings service with the same storage
+      auto storage = std::make_shared<mita::db::Storage>(mita::db::initStorage("data/router.db"));
+      storage->sync_schema();
+      m_settingsService = std::make_shared<mita::SettingsService>(storage);
     } catch (const std::exception& e) {
       printf("[ERROR] Failed to initialize authentication service: %s\n", e.what());
       throw;
@@ -61,8 +78,8 @@ public:
     // Create authentication interceptor
     auto authInterceptor = std::make_shared<AuthInterceptor>(m_authService);
 
-    // Create API Controller with packet monitor and device manager
-    auto apiController = std::make_shared<RouterApiController>(objectMapper, m_packetMonitor, m_deviceManager);
+    // Create API Controller with packet monitor, device manager, settings service, and router
+    auto apiController = std::make_shared<RouterApiController>(objectMapper, m_packetMonitor, m_deviceManager, m_settingsService, m_router);
     router->addController(apiController);
 
     // Create Auth Controller
@@ -126,6 +143,17 @@ public:
     }
 
     printf("[API] HTTP Server started with %zu worker threads\n", NUM_WORKER_THREADS);
+
+    // Start background session cleanup thread
+    m_cleanupThread = std::thread([this]() {
+      while (m_running) {
+        // Cleanup expired sessions every 5 minutes
+        std::this_thread::sleep_for(std::chrono::minutes(5));
+        if (m_running && m_authService) {
+          m_authService->cleanupExpiredSessions();
+        }
+      }
+    });
   }
 
   void stop() {
@@ -142,6 +170,11 @@ public:
         }
       }
       m_workerThreads.clear();
+
+      // Join cleanup thread
+      if (m_cleanupThread.joinable()) {
+        m_cleanupThread.join();
+      }
 
       printf("[API] HTTP Server stopped\n");
     }

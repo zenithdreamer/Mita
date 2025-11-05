@@ -115,9 +115,9 @@ export const packetsOptions = <ThrowOnError extends boolean = false>(options?: O
 };
 
 /**
- * Get routing table
+ * Get routing table devices
  *
- * Retrieve the current routing table
+ * Retrieve all devices in the routing table
  */
 export const getRoutingTable = <ThrowOnError extends boolean = false>(options?: Options<GetRoutingTableData, ThrowOnError>) => {
     return (options?.client ?? client).get<GetRoutingTableResponses, GetRoutingTableErrors, ThrowOnError>({

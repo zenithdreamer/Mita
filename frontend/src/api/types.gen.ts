@@ -4,6 +4,30 @@ export type ClientOptions = {
     baseUrl: 'http://localhost:8080' | (string & {});
 };
 
+export type DevicesDto = {
+    devices?: Array<DeviceDto>;
+};
+
+export type RouteDto = {
+    destination?: string;
+    next_hop?: string;
+    metric?: number;
+    interface_type?: string;
+};
+
+export type SuccessDto = {
+    message?: string;
+};
+
+export type DeviceDto = {
+    device_id?: string;
+    device_type?: string;
+    status?: string;
+    last_seen?: number;
+    rssi?: number;
+    battery_level?: number;
+};
+
 export type DashboardStatsDto = {
     status: string;
     uptime: number;
@@ -24,32 +48,8 @@ export type DashboardStatsDto = {
     downloadSpeed?: number;
 };
 
-export type DeviceDto = {
-    device_id?: string;
-    device_type?: string;
-    status?: string;
-    last_seen?: number;
-    rssi?: number;
-    battery_level?: number;
-};
-
-export type DevicesDto = {
-    devices?: Array<DeviceDto>;
-};
-
-export type SuccessDto = {
-    message?: string;
-};
-
-export type RouteDto = {
-    destination?: string;
-    next_hop?: string;
-    metric?: number;
-    interface_type?: string;
-};
-
-export type RoutingTableDto = {
-    routes?: Array<RouteDto>;
+export type RoutingDevicesDto = {
+    devices?: Array<RoutingDeviceDto>;
 };
 
 export type UserInfoDto = {
@@ -122,6 +122,14 @@ export type StatusDto = {
 export type PacketListDto = {
     packets?: Array<PacketInfoDto>;
     total?: number;
+};
+
+export type RoutingDeviceDto = {
+    device_id?: string;
+    device_type?: string;
+    status?: string;
+    assigned_address?: string;
+    last_seen?: number;
 };
 
 export type ProtocolStatsDto = {
@@ -359,7 +367,7 @@ export type GetRoutingTableResponses = {
     /**
      * OK
      */
-    200: RoutingTableDto;
+    200: RoutingDevicesDto;
 };
 
 export type GetRoutingTableResponse = GetRoutingTableResponses[keyof GetRoutingTableResponses];

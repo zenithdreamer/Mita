@@ -13,6 +13,8 @@
  */
 class RoutingController : public oatpp::web::server::api::ApiController {
 private:
+    std::shared_ptr<mita::services::DeviceManagementService> m_deviceManager;
+
     // Helper to add CORS headers
     template<class T>
     std::shared_ptr<OutgoingResponse> createDtoResponseWithCors(const Status& status, const T& dto) {
@@ -26,31 +28,54 @@ private:
     }
 
 public:
-    RoutingController(const std::shared_ptr<ObjectMapper>& objectMapper)
-        : oatpp::web::server::api::ApiController(objectMapper) {}
+    RoutingController(const std::shared_ptr<ObjectMapper>& objectMapper,
+                     std::shared_ptr<mita::services::DeviceManagementService> deviceManager = nullptr)
+        : oatpp::web::server::api::ApiController(objectMapper)
+        , m_deviceManager(deviceManager) {}
 
     static std::shared_ptr<RoutingController> createShared(
-        const std::shared_ptr<ObjectMapper>& objectMapper
+        const std::shared_ptr<ObjectMapper>& objectMapper,
+        std::shared_ptr<mita::services::DeviceManagementService> deviceManager = nullptr
     ) {
-        return std::make_shared<RoutingController>(objectMapper);
+        return std::make_shared<RoutingController>(objectMapper, deviceManager);
     }
 
     ENDPOINT_INFO(getRoutingTable) {
-        info->summary = "Get routing table";
-        info->description = "Retrieve the current routing table";
-        info->addResponse<Object<RoutingTableDto>>(Status::CODE_200, "application/json");
+        info->summary = "Get routing table devices";
+        info->description = "Retrieve all devices in the routing table";
+        info->addResponse<Object<RoutingDevicesDto>>(Status::CODE_200, "application/json");
         info->addResponse<Object<ErrorDto>>(Status::CODE_500, "application/json");
         info->addTag("Routing");
     }
     ENDPOINT("GET", "/api/routing-table", getRoutingTable) {
         try {
-            auto response = RoutingTableDto::createShared();
-            auto routes = oatpp::Vector<Object<RouteDto>>::createShared();
-            
-            // TODO: Implement actual routing table retrieval
-            // For now, return empty routing table
-            
-            response->routes = routes;
+            auto response = RoutingDevicesDto::createShared();
+            auto devicesVector = oatpp::Vector<Object<RoutingDeviceDto>>::createShared();
+            if (m_deviceManager) {
+                //or maybe will get device list from the trasnpoer instead
+                auto devices = m_deviceManager->get_device_list();
+
+                for (const auto& [device_id, device] : devices) {
+                    auto dto = RoutingDeviceDto::createShared();
+                    
+                    dto->device_id = device_id;
+                    dto->device_type = (device.transport_type == mita::core::TransportType::WIFI) ? "wifi" : "ble";
+                    dto->assigned_address = std::to_string(device.assigned_address);
+
+                    if (device.state == mita::services::DeviceState::AUTHENTICATED ||
+                        device.state == mita::services::DeviceState::ACTIVE) {
+                        dto->status = "active";
+                    } else {
+                        dto->status = "inactive";
+                    }
+                    //the last seen is null for now dont know where to get it yet
+                    dto->last_seen = nullptr;
+
+                    devicesVector->push_back(dto);
+                }
+            }
+
+            response->devices = devicesVector;
             return createDtoResponse(Status::CODE_200, response);
         } catch (const std::exception& e) {
             auto error = ErrorDto::createShared();

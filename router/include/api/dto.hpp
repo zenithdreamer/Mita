@@ -273,6 +273,23 @@ class RoutingTableDto : public oatpp::DTO {
   DTO_FIELD(Vector<Object<RouteDto>>, routes);
 };
 
+
+class RoutingDeviceDto : public oatpp::DTO {
+  DTO_INIT(RoutingDeviceDto, DTO)
+
+  DTO_FIELD(String, device_id);
+  DTO_FIELD(String, device_type);
+  DTO_FIELD(String, status);
+  DTO_FIELD(String, assigned_address);
+  DTO_FIELD(Int64, last_seen);
+};
+
+class RoutingDevicesDto : public oatpp::DTO {
+  DTO_INIT(RoutingDevicesDto, DTO)
+
+  DTO_FIELD(Vector<Object<RoutingDeviceDto>>, devices);
+};
+
 // Device DTOs
 class DeviceDto : public oatpp::DTO {
   DTO_INIT(DeviceDto, DTO)

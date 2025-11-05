@@ -8,6 +8,8 @@
 #include <shared_mutex>
 #include <atomic>
 #include <functional>
+#include <deque>
+#include <chrono>
 #include "core/transport_interface.hpp"
 #include "protocol/protocol.hpp"
 
@@ -56,10 +58,32 @@ namespace mita
             std::chrono::steady_clock::time_point last_activity;
             std::shared_ptr<protocol::PacketCrypto> session_crypto;
             std::map<std::string, std::string> metadata;
+            
+            // Sequence tracking for replay protection and reliability
+            uint16_t last_valid_sequence{0};
+            uint16_t expected_next_sequence{0};
+            bool sequence_initialized{false};
+            std::chrono::steady_clock::time_point last_sequence_time;
+            std::deque<uint16_t> recent_sequences;  // Last 32 sequences for duplicate detection
+            
+            // Session expiration tracking (declared after last_sequence_time to match constructor order)
+            std::chrono::steady_clock::time_point session_created;
+            std::chrono::steady_clock::time_point session_expires;
+            
+            static constexpr std::chrono::seconds SESSION_LIFETIME{3600};  // 1 hour
+            static constexpr size_t SEQUENCE_WINDOW_SIZE = 32;  // Reduced from 100 for better replay protection
 
             ManagedDevice() = default;
             ManagedDevice(const std::string &id, core::TransportType type)
-                : device_id(id), assigned_address(0), transport_type(type), state(DeviceState::CONNECTING), connected_time(std::chrono::steady_clock::now()), last_activity(std::chrono::steady_clock::now()) {}
+                : device_id(id), assigned_address(0), transport_type(type), state(DeviceState::CONNECTING), 
+                  connected_time(std::chrono::steady_clock::now()), last_activity(std::chrono::steady_clock::now()),
+                  last_sequence_time(std::chrono::steady_clock::now()),
+                  session_created(std::chrono::steady_clock::now()),
+                  session_expires(std::chrono::steady_clock::now() + SESSION_LIFETIME) {}
+            
+            bool is_session_expired() const {
+                return std::chrono::steady_clock::now() > session_expires;
+            }
         };
 
         /**
@@ -133,6 +157,15 @@ namespace mita
             
             // ACK packet sending
             void send_ack_packet(const std::string &device_id, uint16_t sequence_number, core::TransportType transport_type);
+            
+            // Sequence validation for replay protection
+            bool validate_sequence_number(ManagedDevice* device, uint16_t seq);
+            void reset_sequence_tracking(ManagedDevice* device);
+            
+            // Timestamp validation for freshness (anti-replay)
+            // NOTE: Uses relative time (millis since boot) - NO RTC REQUIRED
+            // Works across different device boot times with lenient validation
+            bool validate_packet_timestamp(uint16_t timestamp);
 
             // Device management helpers
             ManagedDevice *find_device(const std::string &device_id);

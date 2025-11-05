@@ -44,9 +44,9 @@ private:
   std::shared_ptr<mita::services::DeviceManagementService> m_deviceManager;
   std::shared_ptr<mita::AuthService> m_authService;
   std::shared_ptr<mita::SettingsService> m_settingsService;
+  mita::core::MitaRouter* m_router;
   std::shared_ptr<mita::transports::WiFiTransport> m_wifiTransport;
   std::shared_ptr<mita::transports::ble::BLETransport> m_bleTransport;
-  mita::core::MitaRouter* m_router;
   static constexpr size_t NUM_WORKER_THREADS = 4;
 
 public:

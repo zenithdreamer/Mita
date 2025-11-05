@@ -1,13 +1,17 @@
 #include "../include/crypto/crypto_service.h"
 
-CryptoService::CryptoService() : iv_counter(0), session_key_valid(false)
+CryptoService::CryptoService() : session_key_valid(false)
 {
     memset(session_key, 0, SESSION_KEY_SIZE);
 }
 
-uint32_t CryptoService::generateNonce()
+void CryptoService::generateNonce(uint8_t *nonce_out)
 {
-    return esp_random();
+    // Generate 16 random bytes (increased from 4 bytes)
+    for (int i = 0; i < NONCE_SIZE; i++)
+    {
+        nonce_out[i] = esp_random() & 0xFF;
+    }
 }
 
 bool CryptoService::computeHMAC(const uint8_t *key, size_t key_len,
@@ -47,22 +51,16 @@ bool CryptoService::computeHMAC(const uint8_t *key, size_t key_len,
     return true;
 }
 
-bool CryptoService::deriveSessionKey(const String &shared_secret, uint32_t nonce1, uint32_t nonce2)
+bool CryptoService::deriveSessionKey(const String &shared_secret, const uint8_t *nonce1, const uint8_t *nonce2)
 {
     // SessionKey = HMAC_SHA256(PSK, Nonce1 || Nonce2)
-    uint8_t nonce_data[8];
-    nonce_data[0] = (nonce1 >> 24) & 0xFF;
-    nonce_data[1] = (nonce1 >> 16) & 0xFF;
-    nonce_data[2] = (nonce1 >> 8) & 0xFF;
-    nonce_data[3] = nonce1 & 0xFF;
-    nonce_data[4] = (nonce2 >> 24) & 0xFF;
-    nonce_data[5] = (nonce2 >> 16) & 0xFF;
-    nonce_data[6] = (nonce2 >> 8) & 0xFF;
-    nonce_data[7] = nonce2 & 0xFF;
+    uint8_t nonce_data[NONCE_SIZE * 2];
+    memcpy(nonce_data, nonce1, NONCE_SIZE);
+    memcpy(nonce_data + NONCE_SIZE, nonce2, NONCE_SIZE);
 
     uint8_t session_hmac[HMAC_SIZE];
     if (!computeHMAC((uint8_t *)shared_secret.c_str(), shared_secret.length(),
-                     nonce_data, 8, session_hmac))
+                     nonce_data, NONCE_SIZE * 2, session_hmac))
     {
         return false;
     }
@@ -70,7 +68,6 @@ bool CryptoService::deriveSessionKey(const String &shared_secret, uint32_t nonce
     // Use first 16 bytes as AES-128 key
     memcpy(session_key, session_hmac, SESSION_KEY_SIZE);
     session_key_valid = true;
-    iv_counter = 0;
 
     Serial.println("CryptoService: Session key derived successfully");
     return true;
@@ -85,7 +82,6 @@ void CryptoService::clearSessionKey()
 {
     memset(session_key, 0, SESSION_KEY_SIZE);
     session_key_valid = false;
-    iv_counter = 0;
 }
 
 void CryptoService::getSessionKey(uint8_t *key_out) const
@@ -96,131 +92,132 @@ void CryptoService::getSessionKey(uint8_t *key_out) const
     }
 }
 
-bool CryptoService::encryptPayload(const uint8_t *plaintext, size_t plaintext_len,
-                                   uint8_t *ciphertext, size_t &ciphertext_len)
+// Key derivation helper (HKDF-like)
+bool CryptoService::deriveSubkey(const uint8_t *key, size_t key_len, const char *info, uint8_t *output)
 {
-    if (!session_key_valid)
+    uint8_t info_bytes[3];
+    info_bytes[0] = info[0];
+    info_bytes[1] = info[1];
+    info_bytes[2] = info[2];
+
+    uint8_t hmac[HMAC_SIZE];
+    if (!computeHMAC(key, key_len, info_bytes, 3, hmac))
     {
         return false;
     }
 
-    mbedtls_aes_context aes;
-    mbedtls_aes_init(&aes);
-
-    if (mbedtls_aes_setkey_enc(&aes, session_key, 128) != 0)
-    {
-        mbedtls_aes_free(&aes);
-        return false;
-    }
-
-    // Generate IV using counter (16 bytes)
-    uint8_t iv[16];
-    memset(iv, 0, 16);
-    for (int i = 0; i < 8; i++)
-    {
-        iv[15 - i] = (iv_counter >> (i * 8)) & 0xFF;
-    }
-    iv_counter++;
-
-    // Pad to AES block size using PKCS#7
-    size_t padded_len = ((plaintext_len + AES_BLOCK_SIZE - 1) / AES_BLOCK_SIZE) * AES_BLOCK_SIZE;
-    if (padded_len + 16 > MAX_PAYLOAD_SIZE)
-    {
-        mbedtls_aes_free(&aes);
-        return false;
-    }
-
-    uint8_t *padded_data = (uint8_t *)malloc(padded_len);
-    if (!padded_data)
-    {
-        mbedtls_aes_free(&aes);
-        return false;
-    }
-    memcpy(padded_data, plaintext, plaintext_len);
-
-    // PKCS#7 padding
-    uint8_t pad_value = padded_len - plaintext_len;
-    for (size_t i = plaintext_len; i < padded_len; i++)
-    {
-        padded_data[i] = pad_value;
-    }
-
-    // Copy IV to beginning of ciphertext
-    memcpy(ciphertext, iv, 16);
-
-    // Encrypt using CBC mode
-    if (mbedtls_aes_crypt_cbc(&aes, MBEDTLS_AES_ENCRYPT, padded_len,
-                              iv, padded_data, ciphertext + 16) != 0)
-    {
-        mbedtls_aes_free(&aes);
-        free(padded_data);
-        return false;
-    }
-
-    ciphertext_len = padded_len + 16;
-    mbedtls_aes_free(&aes);
-    free(padded_data);
+    memcpy(output, hmac, SESSION_KEY_SIZE); // Use first 16 bytes
     return true;
 }
 
-bool CryptoService::decryptPayload(const uint8_t *encrypted_data, unsigned int encrypted_length,
-                                   uint8_t *decrypted_data, unsigned int &decrypted_length)
+// AES-GCM Authenticated Encryption
+bool CryptoService::encryptGCM(const uint8_t *plaintext, size_t plaintext_len,
+                               const uint8_t *aad, size_t aad_len,
+                               uint8_t *output, size_t &output_len)
 {
-    if (!session_key_valid)
-    {
-        // No encryption during handshake
-        memcpy(decrypted_data, encrypted_data, encrypted_length);
-        decrypted_length = encrypted_length;
-        return true;
-    }
-
-    if (encrypted_length < 16)
+    if (!session_key_valid || plaintext_len == 0)
     {
         return false;
     }
 
-    mbedtls_aes_context aes;
-    mbedtls_aes_init(&aes);
-
-    if (mbedtls_aes_setkey_dec(&aes, session_key, 128) != 0)
+    // Derive encryption key from session key
+    uint8_t derived_enc_key[SESSION_KEY_SIZE];
+    if (!deriveSubkey(session_key, SESSION_KEY_SIZE, "ENC", derived_enc_key))
     {
-        mbedtls_aes_free(&aes);
         return false;
     }
 
-    // Extract IV from first 16 bytes
-    uint8_t iv[16];
-    memcpy(iv, encrypted_data, 16);
+    mbedtls_gcm_context gcm;
+    mbedtls_gcm_init(&gcm);
 
-    const uint8_t *ciphertext = encrypted_data + 16;
-    size_t ciphertext_len = encrypted_length - 16;
-
-    if (ciphertext_len % AES_BLOCK_SIZE != 0)
+    // Setup GCM with AES-128
+    if (mbedtls_gcm_setkey(&gcm, MBEDTLS_CIPHER_ID_AES, derived_enc_key, 128) != 0)
     {
-        mbedtls_aes_free(&aes);
+        mbedtls_gcm_free(&gcm);
         return false;
     }
 
-    // Decrypt using CBC mode
-    if (mbedtls_aes_crypt_cbc(&aes, MBEDTLS_AES_DECRYPT, ciphertext_len,
-                              iv, ciphertext, decrypted_data) != 0)
+    // Generate 12-byte IV (optimal for GCM)
+    uint8_t iv[12];
+    for (int i = 0; i < 12; i++)
     {
-        mbedtls_aes_free(&aes);
+        iv[i] = esp_random() & 0xFF;
+    }
+
+    // Tag buffer (16 bytes)
+    uint8_t tag[16];
+
+    // Encrypt: output = ciphertext
+    // We'll store: IV (12) || ciphertext || tag (16)
+    if (mbedtls_gcm_crypt_and_tag(&gcm, MBEDTLS_GCM_ENCRYPT,
+                                  plaintext_len, iv, 12,
+                                  aad, aad_len,
+                                  plaintext, output + 12, // ciphertext starts after IV
+                                  16, tag) != 0)
+    {
+        mbedtls_gcm_free(&gcm);
         return false;
     }
 
-    // Remove PKCS#7 padding
-    uint8_t pad_value = decrypted_data[ciphertext_len - 1];
-    if (pad_value > 0 && pad_value <= AES_BLOCK_SIZE)
+    mbedtls_gcm_free(&gcm);
+
+    // Build output: IV || ciphertext || tag
+    memcpy(output, iv, 12);
+    memcpy(output + 12 + plaintext_len, tag, 16);
+    output_len = 12 + plaintext_len + 16;
+
+    return true;
+}
+
+bool CryptoService::decryptGCM(const uint8_t *input, size_t input_len,
+                               const uint8_t *aad, size_t aad_len,
+                               uint8_t *plaintext, size_t &plaintext_len)
+{
+    if (!session_key_valid || input_len < 28) // 12 (IV) + 16 (tag) = min 28 bytes
     {
-        decrypted_length = ciphertext_len - pad_value;
-    }
-    else
-    {
-        decrypted_length = ciphertext_len;
+        return false;
     }
 
-    mbedtls_aes_free(&aes);
+    // Derive encryption key from session key
+    uint8_t derived_enc_key[SESSION_KEY_SIZE];
+    if (!deriveSubkey(session_key, SESSION_KEY_SIZE, "ENC", derived_enc_key))
+    {
+        return false;
+    }
+
+    mbedtls_gcm_context gcm;
+    mbedtls_gcm_init(&gcm);
+
+    // Setup GCM with AES-128
+    if (mbedtls_gcm_setkey(&gcm, MBEDTLS_CIPHER_ID_AES, derived_enc_key, 128) != 0)
+    {
+        mbedtls_gcm_free(&gcm);
+        return false;
+    }
+
+    // Extract IV (first 12 bytes)
+    const uint8_t *iv = input;
+
+    // Extract tag (last 16 bytes)
+    const uint8_t *tag = input + input_len - 16;
+
+    // Ciphertext is between IV and tag
+    const uint8_t *ciphertext = input + 12;
+    size_t ciphertext_len = input_len - 12 - 16;
+
+    // Decrypt and verify tag
+    if (mbedtls_gcm_auth_decrypt(&gcm, ciphertext_len, iv, 12,
+                                 aad, aad_len,
+                                 tag, 16,
+                                 ciphertext, plaintext) != 0)
+    {
+        mbedtls_gcm_free(&gcm);
+        Serial.println("CryptoService: GCM authentication failed - data may be tampered");
+        return false;
+    }
+
+    mbedtls_gcm_free(&gcm);
+    plaintext_len = ciphertext_len;
     return true;
 }
 

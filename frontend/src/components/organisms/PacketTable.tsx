@@ -95,12 +95,19 @@ export function PacketTable({ packets, onPacketClick, formatDate }: PacketTableP
                                         </div>
                                     </TableCell>
                                     <TableCell>
-                                        {packet.encrypted && (
-                                            <Badge variant="secondary" className="gap-1">
-                                                <Lock className="h-3 w-3" />
-                                                Encrypted
-                                            </Badge>
-                                        )}
+                                        <div className="flex gap-1 flex-wrap">
+                                            {packet.encrypted && (
+                                                <Badge variant="secondary" className="gap-1">
+                                                    <Lock className="h-3 w-3" />
+                                                    Encrypted
+                                                </Badge>
+                                            )}
+                                            {packet.isValid === false && (
+                                                <Badge variant="destructive" className="gap-1">
+                                                    {packet.errorFlags || 'INVALID'}
+                                                </Badge>
+                                            )}
+                                        </div>
                                     </TableCell>
                                 </TableRow>
                             ))

@@ -9,8 +9,11 @@
 MitaClient::MitaClient(const NetworkConfig &config)
     : transport(nullptr), network_config(config),
       assigned_address(UNASSIGNED_ADDRESS), handshake_completed(false),
-      nonce1(0), nonce2(0), last_heartbeat(0), last_sensor_reading(0)
+      last_heartbeat(0), last_sensor_reading(0)
 {
+    // Initialize nonce arrays to zero
+    memset(nonce1, 0, NONCE_SIZE);
+    memset(nonce2, 0, NONCE_SIZE);
 }
 
 MitaClient::~MitaClient()
@@ -230,7 +233,7 @@ bool MitaClient::sendHello()
     packet.fragment_id = 0;
     packet.timestamp = (uint16_t)(millis() & 0xFFFF);
 
-    nonce1 = crypto_service.generateNonce();
+    crypto_service.generateNonce(nonce1);
 
     uint8_t *payload = packet.payload;
     size_t offset = 0;
@@ -245,14 +248,26 @@ bool MitaClient::sendHello()
     memcpy(payload + offset, network_config.device_id.c_str(), device_len);
     offset += device_len;
 
-    payload[offset++] = (nonce1 >> 24) & 0xFF;
-    payload[offset++] = (nonce1 >> 16) & 0xFF;
-    payload[offset++] = (nonce1 >> 8) & 0xFF;
-    payload[offset++] = nonce1 & 0xFF;
+    // Copy 16-byte nonce1
+    memcpy(payload + offset, nonce1, NONCE_SIZE);
+    offset += NONCE_SIZE;
 
     packet.payload_length = offset;
 
-    Serial.printf("MitaClient: Sending HELLO (nonce1: 0x%08X)\n", nonce1);
+    Serial.print("MitaClient: Sending HELLO (nonce1: ");
+    for (int i = 0; i < NONCE_SIZE; i++)
+    {
+        if (nonce1[i] < 0x10)
+            Serial.print("0");
+        Serial.print(nonce1[i], HEX);
+    }
+    Serial.println(")");
+
+    // Debug: Print packet header for checksum debugging
+    Serial.printf("MitaClient: HELLO packet header: ver_flags=0x%02X type=0x%02X src=0x%04X dst=0x%04X len=%d chk=0x%02X seq=%d\n",
+                  packet.version_flags, packet.msg_type, packet.source_addr, packet.dest_addr,
+                  packet.payload_length, packet.checksum, packet.sequence_number);
+
     return transport->sendPacket(packet);
 }
 
@@ -264,17 +279,32 @@ bool MitaClient::receiveChallenge()
         return false;
     }
 
-    if (packet.payload_length < 4)
+    // Expect 24 bytes: 16-byte nonce2 + 8-byte timestamp
+    if (packet.payload_length < 24)
     {
+        Serial.printf("MitaClient: CHALLENGE payload too small: %d bytes (expected 24)\n", packet.payload_length);
         return false;
     }
 
-    nonce2 = (packet.payload[0] << 24) |
-             (packet.payload[1] << 16) |
-             (packet.payload[2] << 8) |
-             packet.payload[3];
+    // Extract 16-byte nonce2
+    memcpy(nonce2, packet.payload, NONCE_SIZE);
 
-    Serial.printf("MitaClient: Received CHALLENGE (nonce2: 0x%08X)\n", nonce2);
+    // Extract 8-byte timestamp (we don't need to use it, but we acknowledge its presence)
+    uint64_t timestamp_ms = 0;
+    for (int i = 0; i < 8; i++)
+    {
+        timestamp_ms = (timestamp_ms << 8) | packet.payload[NONCE_SIZE + i];
+    }
+
+    Serial.print("MitaClient: Received CHALLENGE (nonce2: ");
+    for (int i = 0; i < NONCE_SIZE; i++)
+    {
+        if (nonce2[i] < 0x10)
+            Serial.print("0");
+        Serial.print(nonce2[i], HEX);
+    }
+    Serial.printf(", timestamp: %llu)\n", timestamp_ms);
+
     return true;
 }
 
@@ -292,16 +322,15 @@ bool MitaClient::sendAuth()
     packet.fragment_id = 0;
     packet.timestamp = (uint16_t)(millis() & 0xFFFF);
 
-    size_t data_len = 4 + network_config.device_id.length() + network_config.router_id.length();
+    // Construct HMAC data: nonce2 (16 bytes) || device_id || router_id
+    size_t data_len = NONCE_SIZE + network_config.device_id.length() + network_config.router_id.length();
     uint8_t *auth_data = new uint8_t[data_len];
 
-    auth_data[0] = (nonce2 >> 24) & 0xFF;
-    auth_data[1] = (nonce2 >> 16) & 0xFF;
-    auth_data[2] = (nonce2 >> 8) & 0xFF;
-    auth_data[3] = nonce2 & 0xFF;
+    // Copy full 16-byte nonce2
+    memcpy(auth_data, nonce2, NONCE_SIZE);
 
-    memcpy(auth_data + 4, network_config.device_id.c_str(), network_config.device_id.length());
-    memcpy(auth_data + 4 + network_config.device_id.length(),
+    memcpy(auth_data + NONCE_SIZE, network_config.device_id.c_str(), network_config.device_id.length());
+    memcpy(auth_data + NONCE_SIZE + network_config.device_id.length(),
            network_config.router_id.c_str(), network_config.router_id.length());
 
     uint8_t auth_hmac[HMAC_SIZE];
@@ -317,15 +346,13 @@ bool MitaClient::sendAuth()
         return false;
     }
 
+    // Payload: HMAC (16 bytes) || nonce1 (16 bytes) = 32 bytes total
     memcpy(packet.payload, auth_hmac, 16);
-    packet.payload[16] = (nonce1 >> 24) & 0xFF;
-    packet.payload[17] = (nonce1 >> 16) & 0xFF;
-    packet.payload[18] = (nonce1 >> 8) & 0xFF;
-    packet.payload[19] = nonce1 & 0xFF;
+    memcpy(packet.payload + 16, nonce1, NONCE_SIZE);
 
-    packet.payload_length = 20;
+    packet.payload_length = 32; // Changed from 20 to 32
 
-    Serial.println("MitaClient: Sending AUTH");
+    Serial.println("MitaClient: Sending AUTH (32 bytes)");
     return transport->sendPacket(packet);
 }
 
@@ -337,35 +364,42 @@ bool MitaClient::receiveAuthAck()
         return false;
     }
 
+    // Expect 18 bytes: HMAC (16) + address (2)
     if (packet.payload_length < 18)
     {
+        Serial.printf("MitaClient: AUTH_ACK payload too small: %d bytes (expected 18)\n", packet.payload_length);
         return false;
     }
 
-    uint8_t verify_data[4];
-    verify_data[0] = (nonce1 >> 24) & 0xFF;
-    verify_data[1] = (nonce1 >> 16) & 0xFF;
-    verify_data[2] = (nonce1 >> 8) & 0xFF;
-    verify_data[3] = nonce1 & 0xFF;
-
+    // Verify HMAC computed over full 16-byte nonce1
     uint8_t expected_hmac[HMAC_SIZE];
     if (!crypto_service.computeHMAC(
             (uint8_t *)network_config.shared_secret.c_str(), network_config.shared_secret.length(),
-            verify_data, 4, expected_hmac))
+            nonce1, NONCE_SIZE, expected_hmac))
     {
+        Serial.println("MitaClient: Failed to compute expected HMAC");
         return false;
     }
 
-    if (memcmp(packet.payload, expected_hmac, 16) != 0)
+    // Constant-time comparison (protect against timing attacks)
+    uint8_t diff = 0;
+    for (int i = 0; i < 16; i++)
     {
-        Serial.println("MitaClient: Router authentication failed");
+        diff |= packet.payload[i] ^ expected_hmac[i];
+    }
+
+    if (diff != 0)
+    {
+        Serial.println("MitaClient: Router authentication failed - HMAC mismatch");
         return false;
     }
 
     assigned_address = (packet.payload[16] << 8) | packet.payload[17];
 
+    // Derive session key from both 16-byte nonces
     if (!crypto_service.deriveSessionKey(network_config.shared_secret, nonce1, nonce2))
     {
+        Serial.println("MitaClient: Failed to derive session key");
         return false;
     }
 
@@ -397,13 +431,15 @@ void MitaClient::handleIncomingMessages()
         if (packet.msg_type == MSG_DATA)
         {
             uint8_t decrypted[MAX_PAYLOAD_SIZE];
-            unsigned int decrypted_length;
+            size_t decrypted_length;
 
-            if (crypto_service.decryptPayload(packet.payload, packet.payload_length,
-                                              decrypted, decrypted_length))
+            // Use AES-GCM authenticated decryption
+            if (crypto_service.decryptGCM(packet.payload, packet.payload_length,
+                                          nullptr, 0, // No AAD for now
+                                          decrypted, decrypted_length))
             {
                 String message = String((char *)decrypted, decrypted_length);
-                Serial.printf("MitaClient: Received message: %s\n", message.c_str());
+                Serial.printf("MitaClient: Received GCM authenticated message: %s\n", message.c_str());
 
                 String response;
                 if (message_dispatcher.processMessage(message, response))
@@ -422,6 +458,10 @@ void MitaClient::handleIncomingMessages()
                         }
                     }
                 }
+            }
+            else
+            {
+                Serial.println("MitaClient: Failed to decrypt message - MAC verification may have failed");
             }
         }
     }
@@ -451,13 +491,17 @@ bool MitaClient::sendEncryptedMessage(uint16_t dest_addr, const String &message)
     packet.timestamp = (uint16_t)(millis() & 0xFFFF);
 
     size_t encrypted_len;
-    if (!crypto_service.encryptPayload((uint8_t *)message.c_str(), message.length(),
-                                       packet.payload, encrypted_len))
+    // Use AES-GCM authenticated encryption
+    if (!crypto_service.encryptGCM((uint8_t *)message.c_str(), message.length(),
+                                   nullptr, 0, // No AAD for now
+                                   packet.payload, encrypted_len))
     {
+        Serial.println("MitaClient: Failed to encrypt message with GCM");
         return false;
     }
 
     packet.payload_length = encrypted_len;
+    Serial.printf("MitaClient: Sending authenticated encrypted message (%d bytes)\n", encrypted_len);
     return transport->sendPacket(packet);
 }
 

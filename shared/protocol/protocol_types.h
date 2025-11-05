@@ -33,7 +33,7 @@
 #define HMAC_SIZE 32
 #define SESSION_KEY_SIZE 16
 #define AES_BLOCK_SIZE 16
-#define NONCE_SIZE 4
+#define NONCE_SIZE 16
 
 // Special addresses (with PROTOCOL_ prefix to avoid conflicts)
 #define PROTOCOL_ROUTER_ADDRESS 0x0000

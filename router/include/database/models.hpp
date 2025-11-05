@@ -65,10 +65,12 @@ struct MonitoredPacket {
     std::string raw_data;   // Hex-encoded raw packet data
     std::string decoded_header;
     std::string decoded_payload;
+    int is_valid;           // 0 = invalid/failed, 1 = valid
+    std::string error_flags; // e.g., "CHECKSUM_FAIL", "MALFORMED", "INVALID_VERSION"
 
     // Default constructor
     MonitoredPacket() : id(0), timestamp(0), source_addr(0), dest_addr(0),
-                        payload_size(0), encrypted(0) {}
+                        payload_size(0), encrypted(0), is_valid(1), error_flags("") {}
 
     // Constructor with parameters
     MonitoredPacket(int64_t id, const std::string& packet_id, int64_t timestamp,
@@ -76,11 +78,12 @@ struct MonitoredPacket {
                    const std::string& message_type, int payload_size,
                    const std::string& transport, int encrypted,
                    const std::string& raw_data, const std::string& decoded_header,
-                   const std::string& decoded_payload)
+                   const std::string& decoded_payload, int is_valid, const std::string& error_flags)
         : id(id), packet_id(packet_id), timestamp(timestamp), direction(direction),
           source_addr(source_addr), dest_addr(dest_addr), message_type(message_type),
           payload_size(payload_size), transport(transport), encrypted(encrypted),
-          raw_data(raw_data), decoded_header(decoded_header), decoded_payload(decoded_payload) {}
+          raw_data(raw_data), decoded_header(decoded_header), decoded_payload(decoded_payload),
+          is_valid(is_valid), error_flags(error_flags) {}
 };
 
 // Settings entity for sqlite_orm
@@ -150,7 +153,9 @@ inline auto initStorage(const std::string& path) {
             make_column("encrypted", &MonitoredPacket::encrypted),
             make_column("raw_data", &MonitoredPacket::raw_data),
             make_column("decoded_header", &MonitoredPacket::decoded_header),
-            make_column("decoded_payload", &MonitoredPacket::decoded_payload)
+            make_column("decoded_payload", &MonitoredPacket::decoded_payload),
+            make_column("is_valid", &MonitoredPacket::is_valid, default_value(1)),
+            make_column("error_flags", &MonitoredPacket::error_flags, default_value(""))
         )
     );
 }

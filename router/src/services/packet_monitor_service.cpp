@@ -100,6 +100,85 @@ namespace mita
             }
         }
 
+        void PacketMonitorService::capture_invalid_packet(const std::vector<uint8_t> &raw_data,
+                                                          const std::string &reason,
+                                                          const std::string &direction,
+                                                          core::TransportType transport)
+        {
+            if (!enabled_)
+            {
+                return;
+            }
+
+            try
+            {
+                CapturedPacket captured;
+                captured.id = generate_packet_id();
+                captured.timestamp = std::chrono::system_clock::now();
+                captured.direction = direction;
+                captured.transport = (transport == core::TransportType::WIFI) ? "wifi" : "ble";
+                captured.raw_data = raw_data;
+                
+                // Mark as invalid
+                captured.is_valid = false;
+                captured.message_type = "INVALID";
+                captured.source_addr = 0xFFFF;
+                captured.dest_addr = 0xFFFF;
+                captured.payload_size = raw_data.size();
+                captured.encrypted = false;
+                
+                // Determine error flags from reason
+                if (reason.find("Checksum") != std::string::npos || reason.find("checksum") != std::string::npos)
+                {
+                    captured.error_flags = "CHECKSUM_FAIL";
+                }
+                else if (reason.find("version") != std::string::npos)
+                {
+                    captured.error_flags = "INVALID_VERSION";
+                }
+                else if (reason.find("parse") != std::string::npos || reason.find("Insufficient") != std::string::npos)
+                {
+                    captured.error_flags = "MALFORMED";
+                }
+                else
+                {
+                    captured.error_flags = "INVALID";
+                }
+                
+                // Store rejection reason in decoded fields
+                captured.decoded_header = "REJECTED: " + reason;
+                
+                // Show hex dump of raw data
+                std::string hex_dump;
+                for (size_t i = 0; i < std::min(raw_data.size(), size_t(64)); i++)
+                {
+                    char buf[4];
+                    snprintf(buf, sizeof(buf), "%02X ", raw_data[i]);
+                    hex_dump += buf;
+                    if ((i + 1) % 16 == 0) hex_dump += "\n";
+                }
+                captured.decoded_payload = "Raw data (first 64 bytes):\n" + hex_dump;
+
+                logger_->warning("Invalid packet captured",
+                               core::LogContext()
+                                   .add("id", captured.id)
+                                   .add("reason", reason)
+                                   .add("size", raw_data.size())
+                                   .add("transport", captured.transport));
+
+                // Save to database if storage is available
+                if (storage_)
+                {
+                    save_packet_to_db(captured);
+                }
+            }
+            catch (const std::exception &e)
+            {
+                logger_->error("Failed to capture invalid packet",
+                             core::LogContext().add("error", e.what()));
+            }
+        }
+
         std::vector<CapturedPacket> PacketMonitorService::get_packets(size_t limit, size_t offset) const
         {
             std::vector<CapturedPacket> result;
@@ -140,6 +219,8 @@ namespace mita
                         p.raw_data = hex_to_bytes(row.raw_data);
                         p.decoded_header = row.decoded_header;
                         p.decoded_payload = row.decoded_payload;
+                        p.is_valid = row.is_valid != 0;
+                        p.error_flags = row.error_flags;
                         result.push_back(std::move(p));
                     }
                 }
@@ -469,6 +550,8 @@ namespace mita
                 db_packet.raw_data = bytes_to_hex(packet.raw_data);
                 db_packet.decoded_header = packet.decoded_header;
                 db_packet.decoded_payload = packet.decoded_payload;
+                db_packet.is_valid = packet.is_valid ? 1 : 0;
+                db_packet.error_flags = packet.error_flags;
 
                 // Insert into database
                 storage_->insert(db_packet);

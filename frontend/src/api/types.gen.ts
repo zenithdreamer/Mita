@@ -106,6 +106,8 @@ export type PacketInfoDto = {
     payloadSize?: number;
     transport?: string;
     encrypted?: boolean;
+    isValid?: boolean;
+    errorFlags?: string;
     rawData?: string;
     decodedHeader?: string;
     decodedPayload?: string;

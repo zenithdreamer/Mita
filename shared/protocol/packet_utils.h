@@ -6,32 +6,53 @@
 
 class PacketUtils {
 public:
+    
+    // Compute checksum from serialized buffer (avoiding struct padding issues)
+    // Uses simple sum algorithm matching the router implementation
+    static uint8_t computeChecksumFromBuffer(const uint8_t* buffer, size_t length) {
+        uint32_t sum = 0;
+        
+        // Bytes 0-6 (before checksum)
+        for (int i = 0; i < 7; i++) {
+            sum += buffer[i];
+        }
+        
+        // Skip byte 7 (checksum field)
+        
+        // Bytes 8 to end (after checksum: rest of header + payload)
+        for (size_t i = 8; i < length; i++) {
+            sum += buffer[i];
+        }
+        
+        // Return 8-bit checksum (sum of all bytes modulo 256, then one's complement)
+        return static_cast<uint8_t>(~sum);
+    }
+    
+    // Legacy function kept for compatibility (but should not be used due to struct padding)
     static uint8_t computeChecksum(const BasicProtocolPacket& packet) {
         uint32_t sum = 0;
-
-        sum += packet.version_flags;
-        sum += packet.msg_type;
-        sum += (packet.source_addr >> 8) & 0xFF;
-        sum += packet.source_addr & 0xFF;
-        sum += (packet.dest_addr >> 8) & 0xFF;
-        sum += packet.dest_addr & 0xFF;
-        sum += packet.payload_length;
-        // Byte 7 (checksum) is NOT included
-        sum += (packet.sequence_number >> 8) & 0xFF;
-        sum += packet.sequence_number & 0xFF;
-        sum += packet.ttl;
-        sum += packet.priority_flags;
-        sum += (packet.fragment_id >> 8) & 0xFF;
-        sum += packet.fragment_id & 0xFF;
-        sum += (packet.timestamp >> 8) & 0xFF;
-        sum += packet.timestamp & 0xFF;
-
-        // Add payload bytes
+        
+        // Process header fields (excluding checksum byte itself)
+        const uint8_t* bytes = reinterpret_cast<const uint8_t*>(&packet);
+        
+        // Bytes 0-6 (before checksum)
+        for (int i = 0; i < 7; i++) {
+            sum += bytes[i];
+        }
+        
+        // Skip byte 7 (checksum field)
+        
+        // Bytes 8-15 (after checksum, before payload)
+        for (int i = 8; i < 16; i++) {
+            sum += bytes[i];
+        }
+        
+        // Payload bytes
         for (uint8_t i = 0; i < packet.payload_length; i++) {
             sum += packet.payload[i];
         }
-
-        // Return one's complement
+        
+        // Return 8-bit checksum (sum of all bytes modulo 256, then one's complement)
         return static_cast<uint8_t>(~sum);
     }
 
@@ -43,7 +64,7 @@ public:
         buffer[4] = (packet.dest_addr >> 8) & 0xFF;
         buffer[5] = packet.dest_addr & 0xFF;
         buffer[6] = packet.payload_length;
-        buffer[7] = computeChecksum(packet);
+        buffer[7] = 0;  // Placeholder for checksum
         buffer[8] = (packet.sequence_number >> 8) & 0xFF;
         buffer[9] = packet.sequence_number & 0xFF;
         buffer[10] = packet.ttl;
@@ -58,6 +79,9 @@ public:
         }
 
         length = HEADER_SIZE + packet.payload_length;
+        
+        // Compute checksum from serialized buffer
+        buffer[7] = computeChecksumFromBuffer(buffer, length);
     }
 
     static bool deserializePacket(const uint8_t* buffer, size_t length, BasicProtocolPacket& packet) {
@@ -86,8 +110,8 @@ public:
             memcpy(packet.payload, buffer + HEADER_SIZE, packet.payload_length);
         }
 
-        // Verify checksum
-        uint8_t computed_checksum = computeChecksum(packet);
+        // Verify checksum from buffer (not struct, to avoid padding issues)
+        uint8_t computed_checksum = computeChecksumFromBuffer(buffer, length);
         if (computed_checksum != received_checksum) {
             return false; // Checksum verification failed
         }

@@ -6,6 +6,7 @@
 #include <string>
 #include <memory>
 #include <map>
+#include <deque>
 #include <chrono>
 #include <mutex>
 #include "protocol/protocol_types.h"
@@ -94,18 +95,34 @@ namespace mita
             PacketCrypto(const std::vector<uint8_t> &session_key);
             ~PacketCrypto();
 
-            // Encryption/Decryption
+            // Legacy: Encryption/Decryption (basic - DEPRECATED, kept for compatibility)
             std::vector<uint8_t> encrypt(const std::vector<uint8_t> &plaintext);
             std::vector<uint8_t> decrypt(const std::vector<uint8_t> &ciphertext);
 
-            // HMAC verification
+            // Legacy: Encrypt-then-MAC (DEPRECATED, use GCM instead)
+            std::vector<uint8_t> encrypt_authenticated(const std::vector<uint8_t> &plaintext);
+            std::vector<uint8_t> decrypt_authenticated(const std::vector<uint8_t> &data);
+
+            // NEW: AES-GCM Authenticated Encryption (RECOMMENDED)
+            // GCM provides both confidentiality and authenticity in one operation
+            std::vector<uint8_t> encrypt_gcm(const std::vector<uint8_t> &plaintext, 
+                                              const std::vector<uint8_t> &additional_data = {});
+            std::vector<uint8_t> decrypt_gcm(const std::vector<uint8_t> &ciphertext,
+                                              const std::vector<uint8_t> &additional_data = {});
+
+            // HMAC verification (legacy, for control packets)
             std::vector<uint8_t> compute_hmac(const std::vector<uint8_t> &data);
             bool verify_hmac(const std::vector<uint8_t> &data, const std::vector<uint8_t> &hmac);
 
         private:
             std::vector<uint8_t> session_key_;
+            std::vector<uint8_t> encryption_key_;  // Derived key for AES
+            std::vector<uint8_t> mac_key_;         // Derived key for HMAC (separate from encryption key)
             class Impl;
             std::unique_ptr<Impl> impl_;
+            
+            // Key derivation helper
+            std::vector<uint8_t> derive_subkey(const std::vector<uint8_t> &key, const std::vector<uint8_t> &info);
         };
 
         /**
@@ -121,7 +138,16 @@ namespace mita
                 std::vector<uint8_t> nonce2;
                 std::vector<uint8_t> session_key;
                 std::chrono::steady_clock::time_point timestamp;
+                uint64_t creation_time_ms = 0;  // Unix timestamp for freshness validation
                 int attempts = 0;
+            };
+            
+            // Rate limiting structure
+            struct RateLimitState
+            {
+                std::deque<std::chrono::steady_clock::time_point> attempts;
+                size_t max_attempts = 5;
+                std::chrono::seconds window{60};
             };
 
             HandshakeManager(const std::string &router_id, const std::string &shared_secret);
@@ -141,12 +167,19 @@ namespace mita
             std::unique_ptr<PacketCrypto> get_session_crypto(const std::string &device_id);
             void cleanup_expired_handshakes(std::chrono::seconds timeout);
             void remove_handshake(const std::string &device_id);
+            
+            // Rate limiting (DoS protection)
+            bool check_rate_limit(const std::string &source_id);
 
         private:
             std::string router_id_;
             std::vector<uint8_t> shared_secret_;
             std::map<std::string, HandshakeState> pending_handshakes_;
             mutable std::mutex handshakes_mutex_;
+            
+            // Rate limiting state
+            std::map<std::string, RateLimitState> rate_limits_;
+            mutable std::mutex rate_limit_mutex_;
 
             std::vector<uint8_t> derive_session_key(const std::vector<uint8_t> &nonce1,
                                                     const std::vector<uint8_t> &nonce2);

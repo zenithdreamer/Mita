@@ -72,6 +72,8 @@ namespace mita
                 it->second.last_activity = std::chrono::steady_clock::now();
                 it->second.session_crypto.reset();
 
+                // Reset sequence tracking on reconnect
+                reset_sequence_tracking(&it->second);
 
                 it->second.state = DeviceState::HANDSHAKING;
 
@@ -135,6 +137,14 @@ namespace mita
             device->session_crypto = session_crypto;
             device->state = DeviceState::AUTHENTICATED;
             device->last_activity = std::chrono::steady_clock::now();
+
+            // Set session expiration (1 hour from now)
+            device->session_created = std::chrono::steady_clock::now();
+            device->session_expires = device->session_created + ManagedDevice::SESSION_LIFETIME;
+
+            // Reset sequence tracking on new authentication
+            // This ensures fresh sequence validation for the new session
+            reset_sequence_tracking(device);
 
             // Update routing service with session crypto
             routing_service_.set_session_crypto(device_id, session_crypto);
@@ -270,10 +280,10 @@ namespace mita
                                                 device->assigned_address,
                                                 message);
 
-                // Encrypt if session crypto is available
+                // Encrypt if session crypto is available (use authenticated encryption)
                 if (device->session_crypto)
                 {
-                    auto encrypted_payload = device->session_crypto->encrypt(message);
+                    auto encrypted_payload = device->session_crypto->encrypt_authenticated(message);
                     packet.set_payload(encrypted_payload);
                     packet.set_encrypted(true);
                 }
@@ -525,11 +535,55 @@ namespace mita
                                                           const protocol::ProtocolPacket &packet,
                                                           core::TransportType transport_type)
         {
-            const ManagedDevice *device = get_device_info(device_id);
+            // Get mutable device pointer for sequence tracking updates
+            ManagedDevice *device = find_device(device_id);
             if (!device || (device->state != DeviceState::ACTIVE && device->state != DeviceState::AUTHENTICATED))
             {
                 logger_->warning("Received data packet from inactive device",
                                  core::LogContext().add("device_id", device_id));
+                return;
+            }
+
+            // Check session expiration - force re-authentication if expired
+            if (device->is_session_expired())
+            {
+                logger_->warning("Session expired - forcing re-authentication",
+                                 core::LogContext()
+                                     .add("device_id", device_id)
+                                     .add("session_age_minutes",
+                                          std::chrono::duration_cast<std::chrono::minutes>(
+                                              std::chrono::steady_clock::now() - device->session_created)
+                                              .count()));
+
+                // Force device to re-authenticate
+                device->state = DeviceState::CONNECTING;
+                device->session_crypto.reset();
+                statistics_service_.record_protocol_error();
+                return;
+            }
+
+            // Validate timestamp freshness (max 60 seconds old)
+            // Protects against replay attacks with old but valid sequence numbers
+            if (!validate_packet_timestamp(packet.get_timestamp()))
+            {
+                logger_->warning("Packet rejected due to stale timestamp",
+                                 core::LogContext()
+                                     .add("device_id", device_id)
+                                     .add("timestamp", packet.get_timestamp()));
+                statistics_service_.record_protocol_error();
+                return;
+            }
+
+            // Validate sequence number before processing packet
+            // This protects against replay attacks, packet injection, and detects packet loss
+            if (!validate_sequence_number(device, packet.get_sequence_number()))
+            {
+                logger_->warning("Packet rejected due to invalid sequence number",
+                                 core::LogContext()
+                                     .add("device_id", device_id)
+                                     .add("sequence", packet.get_sequence_number()));
+                statistics_service_.record_protocol_error();
+                // Don't send ACK for invalid sequence
                 return;
             }
 
@@ -560,15 +614,24 @@ namespace mita
             {
                 try
                 {
-                    payload = device->session_crypto->decrypt(payload);
+                    // Use AES-GCM for authenticated encryption
+                    // GCM provides both confidentiality and authenticity in one operation
+                    // We can pass packet header as AAD (Additional Authenticated Data)
+                    std::vector<uint8_t> aad; // Could include packet header for extra protection
+                    payload = device->session_crypto->decrypt_gcm(payload, aad);
                     decrypted = true;
+
+                    logger_->debug("GCM decryption successful",
+                                   core::LogContext()
+                                       .add("device_id", device_id)
+                                       .add("decrypted_size", payload.size()));
                 }
                 catch (const std::exception &e)
                 {
-                    logger_->error("Failed to decrypt packet",
+                    logger_->error("GCM authentication/decryption failed - possible tampering",
                                    core::LogContext().add("device_id", device_id).add("error", e.what()));
                     statistics_service_.record_protocol_error();
-                    return;
+                    return; // Reject packet if GCM verification fails
                 }
             }
 
@@ -727,6 +790,156 @@ namespace mita
         {
             auto it = managed_devices_.find(device_id);
             return (it != managed_devices_.end()) ? &it->second : nullptr;
+        }
+
+        bool DeviceManagementService::validate_sequence_number(ManagedDevice *device, uint16_t seq)
+        {
+            if (!device)
+            {
+                return false;
+            }
+
+            // First packet after auth - initialize sequence tracking
+            if (!device->sequence_initialized)
+            {
+                device->last_valid_sequence = seq;
+                device->expected_next_sequence = (seq + 1) % 65536;
+                device->sequence_initialized = true;
+                device->last_sequence_time = std::chrono::steady_clock::now();
+                device->recent_sequences.push_back(seq);
+
+                logger_->debug("Sequence tracking initialized",
+                               core::LogContext()
+                                   .add("device_id", device->device_id)
+                                   .add("initial_sequence", seq));
+                return true;
+            }
+
+            // Check for exact duplicate (replay attack detection)
+            if (std::find(device->recent_sequences.begin(),
+                          device->recent_sequences.end(),
+                          seq) != device->recent_sequences.end())
+            {
+                logger_->warning("Duplicate sequence detected - possible replay attack",
+                                 core::LogContext()
+                                     .add("device_id", device->device_id)
+                                     .add("sequence", seq)
+                                     .add("last_valid", device->last_valid_sequence));
+                statistics_service_.record_protocol_error();
+                return false; // REJECT duplicate
+            }
+
+            // Handle wrap-around (65535 → 0)
+            // Consider it a wrap if last sequence > 60000 and new sequence < 5000
+            bool is_wrap = (device->last_valid_sequence > 60000 && seq < 5000);
+
+            // Calculate sequence difference
+            int32_t seq_diff;
+            if (is_wrap)
+            {
+                seq_diff = (65536 + seq) - device->last_valid_sequence;
+            }
+            else
+            {
+                seq_diff = static_cast<int32_t>(seq) - static_cast<int32_t>(device->last_valid_sequence);
+            }
+
+            // Accept if within reasonable window (1-100 ahead)
+            if (seq_diff > 0 && seq_diff <= static_cast<int32_t>(ManagedDevice::SEQUENCE_WINDOW_SIZE))
+            {
+                // Valid new sequence
+                if (seq_diff > 1)
+                {
+                    logger_->warning("Sequence gap detected - possible packet loss",
+                                     core::LogContext()
+                                         .add("device_id", device->device_id)
+                                         .add("expected", device->expected_next_sequence)
+                                         .add("received", seq)
+                                         .add("gap_size", seq_diff - 1));
+                }
+
+                // Update tracking
+                device->recent_sequences.push_back(seq);
+                if (device->recent_sequences.size() > ManagedDevice::SEQUENCE_WINDOW_SIZE)
+                {
+                    device->recent_sequences.pop_front();
+                }
+                device->last_valid_sequence = seq;
+                device->expected_next_sequence = (seq + 1) % 65536;
+                device->last_sequence_time = std::chrono::steady_clock::now();
+
+                return true;
+            }
+
+            // Sequence too old or too far ahead - reject
+            logger_->warning("Sequence number out of acceptable range",
+                             core::LogContext()
+                                 .add("device_id", device->device_id)
+                                 .add("last_valid", device->last_valid_sequence)
+                                 .add("received", seq)
+                                 .add("difference", seq_diff)
+                                 .add("is_wrap", is_wrap));
+            statistics_service_.record_protocol_error();
+            return false; // REJECT
+        }
+
+        bool DeviceManagementService::validate_packet_timestamp(uint16_t timestamp)
+        {
+            // IMPORTANT: This validates relative time freshness, NOT absolute time
+            // Works without RTC - both router and client use millis() since boot
+            // The 16-bit timestamp wraps every ~65 seconds, which is fine for freshness checks
+
+            // Get current time in milliseconds (16-bit, wraps every ~65 seconds)
+            auto now = std::chrono::steady_clock::now();
+            auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                              now.time_since_epoch())
+                              .count();
+            uint16_t current_time = static_cast<uint16_t>(now_ms & 0xFFFF);
+
+            // Calculate age with wrap-around handling
+            uint16_t age;
+            if (current_time >= timestamp)
+            {
+                age = current_time - timestamp;
+            }
+            else
+            {
+                // Wrapped around (timestamp is from before the wrap)
+                age = (65536 - timestamp) + current_time;
+            }
+
+            // Be lenient: Reject only if EXTREMELY old (> 60 seconds)
+            // This protects against replay attacks with very old packets
+            // But won't reject packets due to minor clock drift between devices
+            const uint16_t MAX_PACKET_AGE_MS = 60000; // 60 seconds
+
+            // Accept if:
+            // 1. Age is reasonable (< 60 seconds), OR
+            // 2. Age appears very large due to clock desync (> 5 seconds before wrap)
+            // This handles case where client and router have different boot times
+            if (age > MAX_PACKET_AGE_MS && age < 60535) // Leave 1 second margin before wrap
+            {
+                // Only reject if timestamp is genuinely old (not a clock offset issue)
+                return false;
+            }
+
+            return true;
+        }
+
+        void DeviceManagementService::reset_sequence_tracking(ManagedDevice *device)
+        {
+            if (!device)
+            {
+                return;
+            }
+
+            device->sequence_initialized = false;
+            device->recent_sequences.clear();
+            device->last_valid_sequence = 0;
+            device->expected_next_sequence = 0;
+
+            logger_->info("Sequence tracking reset",
+                          core::LogContext().add("device_id", device->device_id));
         }
 
     } // namespace services

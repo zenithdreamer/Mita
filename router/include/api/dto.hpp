@@ -57,6 +57,10 @@ class PacketInfoDto : public oatpp::DTO {
   DTO_FIELD(String, transport);  // "wifi" or "ble"
   DTO_FIELD(Boolean, encrypted);
   
+  // Validation flags
+  DTO_FIELD(Boolean, isValid) = true;           // false if packet failed validation
+  DTO_FIELD(String, errorFlags) = "";           // e.g., "CHECKSUM_FAIL", "MALFORMED", "INVALID_VERSION"
+  
   // Raw packet data (hex string)
   DTO_FIELD(String, rawData);
   

@@ -37,6 +37,10 @@ namespace mita
             bool encrypted;
             std::vector<uint8_t> raw_data;
             
+            // Validation flags
+            bool is_valid = true;          // false if packet failed validation
+            std::string error_flags;        // e.g., "CHECKSUM_FAIL", "MALFORMED", "INVALID_VERSION"
+            
             // Decoded information
             std::string decoded_header;
             std::string decoded_payload;
@@ -55,6 +59,12 @@ namespace mita
             void capture_packet(const protocol::ProtocolPacket &packet,
                               const std::string &direction,
                               core::TransportType transport);
+            
+            // Capture invalid/rejected packets (for debugging)
+            void capture_invalid_packet(const std::vector<uint8_t> &raw_data,
+                                       const std::string &reason,
+                                       const std::string &direction,
+                                       core::TransportType transport);
 
             // Get captured packets
             std::vector<CapturedPacket> get_packets(size_t limit = 100, size_t offset = 0) const;

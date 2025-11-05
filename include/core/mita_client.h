@@ -22,8 +22,8 @@ private:
 
     // State
     bool handshake_completed;
-    uint32_t nonce1;
-    uint32_t nonce2;
+    uint8_t nonce1[NONCE_SIZE];  // Changed from uint32_t to 16-byte array
+    uint8_t nonce2[NONCE_SIZE];  // Changed from uint32_t to 16-byte array
 
     // Timing
     unsigned long last_heartbeat;

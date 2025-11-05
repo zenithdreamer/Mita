@@ -271,12 +271,15 @@ namespace mita
         bool WiFiClientHandler::receive_packet_from_socket(int socket,
                                                            protocol::ProtocolPacket &packet,
                                                            int timeout_ms,
-                                                           std::shared_ptr<core::Logger> logger)
+                                                           std::shared_ptr<core::Logger> logger,
+                                                           std::shared_ptr<services::PacketMonitorService> packet_monitor)
         {
             if (socket < 0)
             {
                 return false;
             }
+
+            std::vector<uint8_t> packet_data; // Declare outside try for exception handler access
 
             try
             {
@@ -310,7 +313,7 @@ namespace mita
                 // payload_length is uint8_t (0-255) so it's always <= 256, no validation needed
 
                 // Read payload if present
-                std::vector<uint8_t> packet_data = header_data;
+                packet_data = header_data;
                 if (payload_length > 0)
                 {
                     std::vector<uint8_t> payload_data(payload_length);
@@ -327,6 +330,22 @@ namespace mita
                     packet_data.insert(packet_data.end(), payload_data.begin(), payload_data.end());
                 }
 
+                // Log raw packet for debugging checksum issues
+                if (logger && logger->is_enabled(core::LogLevel::DEBUG))
+                {
+                    std::string hex_data;
+                    for (size_t i = 0; i < std::min(packet_data.size(), size_t(32)); i++)
+                    {
+                        char buf[4];
+                        snprintf(buf, sizeof(buf), "%02X ", packet_data[i]);
+                        hex_data += buf;
+                    }
+                    logger->debug("Received raw packet data",
+                                 core::LogContext()
+                                     .add("size", packet_data.size())
+                                     .add("hex_start", hex_data));
+                }
+
                 // Parse packet
                 auto parsed_packet = protocol::ProtocolPacket::from_bytes(packet_data);
                 if (!parsed_packet)
@@ -335,6 +354,13 @@ namespace mita
                     {
                         logger->error("failed to parse packet");
                     }
+                    
+                    // Capture invalid packet for monitoring
+                    if (packet_monitor)
+                    {
+                        packet_monitor->capture_invalid_packet(packet_data, "Failed to parse packet", "inbound", core::TransportType::WIFI);
+                    }
+                    
                     return false;
                 }
 
@@ -348,6 +374,15 @@ namespace mita
                     logger->error("Exception receiving packet",
                                  core::LogContext().add("error", e.what()));
                 }
+                
+                // Capture invalid packet with exception details
+                if (packet_monitor && !packet_data.empty())
+                {
+                    std::string reason = "Exception: ";
+                    reason += e.what();
+                    packet_monitor->capture_invalid_packet(packet_data, reason, "inbound", core::TransportType::WIFI);
+                }
+                
                 return false;
             }
         }
@@ -359,7 +394,7 @@ namespace mita
                 return false;
             }
 
-            bool success = receive_packet_from_socket(client_socket_, packet, timeout_ms, logger_);
+            bool success = receive_packet_from_socket(client_socket_, packet, timeout_ms, logger_, packet_monitor_);
 
             if (success)
             {
@@ -393,6 +428,14 @@ namespace mita
                     {
                         if (router_id == config_.router_id)
                         {
+                            // Check rate limit to prevent DoS attacks
+                            if (!handshake_manager_->check_rate_limit(device_id))
+                            {
+                                logger_->warning("Rate limit exceeded for handshake - dropping HELLO",
+                                                core::LogContext().add("device_id", device_id));
+                                return;
+                            }
+                            
                             device_id_ = device_id;
 
                             // Store device_id and send CHALLENGE without registering yet

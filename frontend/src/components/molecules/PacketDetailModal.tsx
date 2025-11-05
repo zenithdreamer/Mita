@@ -60,22 +60,43 @@ export function PacketDetailModal({ packet, onClose, formatDate }: PacketDetailM
                 throw new Error('Encrypted payload too short - missing IV');
             }
 
-            const iv = payloadBytes.slice(0, 16);
-            const ciphertext = payloadBytes.slice(16);
-
-            const keyBytes = hexToBytes(cleanKey);
+            // AES-GCM format: IV (12 bytes) || Ciphertext || Tag (16 bytes)
+            // Minimum: 12 (IV) + 16 (tag) = 28 bytes
+            if (payloadBytes.length < 28) {
+                throw new Error('Encrypted payload too short for GCM decryption');
+            }
+            
+            const iv = payloadBytes.slice(0, 12);  // 12-byte IV for GCM
+            const ciphertextWithTag = payloadBytes.slice(12);  // Ciphertext + tag (16 bytes at end)
+            
+            // Derive encryption key from session key using HMAC-SHA256
+            // encryption_key = HMAC-SHA256(session_key, "ENC")
+            const sessionKeyBytes = hexToBytes(cleanKey);
+            
+            const sessionCryptoKey = await crypto.subtle.importKey(
+                'raw',
+                sessionKeyBytes as BufferSource,
+                { name: 'HMAC', hash: 'SHA-256' },
+                false,
+                ['sign']
+            );
+            
+            const encInfo = new TextEncoder().encode('ENC');
+            const encKeyFull = await crypto.subtle.sign('HMAC', sessionCryptoKey, encInfo);
+            const encKeyBytes = new Uint8Array(encKeyFull).slice(0, 16); // First 16 bytes for AES-128
+            
             const cryptoKey = await crypto.subtle.importKey(
                 'raw',
-                keyBytes as BufferSource,
-                { name: 'AES-CBC' },
+                encKeyBytes as BufferSource,
+                { name: 'AES-GCM', length: 128 },
                 false,
                 ['decrypt']
             );
 
             const decryptedBytes = await crypto.subtle.decrypt(
-                { name: 'AES-CBC', iv: iv },
+                { name: 'AES-GCM', iv: iv, tagLength: 128 },  // 128-bit tag = 16 bytes
                 cryptoKey,
-                ciphertext
+                ciphertextWithTag
             );
 
             const decoder = new TextDecoder('utf-8');

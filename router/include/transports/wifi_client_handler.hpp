@@ -63,7 +63,8 @@ public:
     static bool receive_packet_from_socket(int socket,
                                           protocol::ProtocolPacket& packet,
                                           int timeout_ms,
-                                          std::shared_ptr<core::Logger> logger);
+                                          std::shared_ptr<core::Logger> logger,
+                                          std::shared_ptr<services::PacketMonitorService> packet_monitor = nullptr);
 
 private:
     void handle_client();

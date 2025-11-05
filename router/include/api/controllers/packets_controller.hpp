@@ -78,20 +78,6 @@ public:
       }
     }
 
-    // Convert oatpp primitive types to native ints before printing to avoid format warnings
-    int limitVal = 0;
-    int offsetVal = 0;
-    try {
-      limitVal = static_cast<int>(limit);
-    } catch (...) {
-      limitVal = 0;
-    }
-    try {
-      offsetVal = static_cast<int>(offset);
-    } catch (...) {
-      offsetVal = 0;
-    }
-
     auto dto = PacketListDto::createShared();
     dto->packets = oatpp::Vector<oatpp::Object<PacketInfoDto>>::createShared();
 
@@ -135,6 +121,9 @@ public:
 
       packetDto->decodedHeader = packet.decoded_header;
       packetDto->decodedPayload = packet.decoded_payload;
+      
+      packetDto->isValid = packet.is_valid;
+      packetDto->errorFlags = packet.error_flags;
 
       dto->packets->push_back(packetDto);
     }

@@ -258,6 +258,14 @@ namespace mita
                                                 core::LogContext{}.add("router_id", router_id));
                                 return;
                             }
+                            
+                            // Check rate limit to prevent DoS attacks
+                            if (!handshake_manager_->check_rate_limit(device_id))
+                            {
+                                logger_->warning("Rate limit exceeded for handshake - dropping HELLO",
+                                                core::LogContext{}.add("device_id", device_id));
+                                return;
+                            }
 
                             device_id_ = device_id;
                             logger_->info("Received HELLO from BLE device",

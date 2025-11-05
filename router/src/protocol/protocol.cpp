@@ -351,8 +351,36 @@ namespace mita
             std::vector<uint8_t> session_key_;
         };
 
+        // Key derivation helper (HKDF-like)
+        std::vector<uint8_t> PacketCrypto::derive_subkey(const std::vector<uint8_t> &key, const std::vector<uint8_t> &info)
+        {
+            unsigned int hmac_len;
+            std::vector<uint8_t> derived(EVP_MAX_MD_SIZE);
+            
+            unsigned char *result = HMAC(EVP_sha256(),
+                                        key.data(), key.size(),
+                                        info.data(), info.size(),
+                                        derived.data(), &hmac_len);
+            
+            if (!result)
+            {
+                throw std::runtime_error("Failed to derive subkey");
+            }
+            
+            derived.resize(16);  // Use first 16 bytes for AES-128
+            return derived;
+        }
+
         PacketCrypto::PacketCrypto(const std::vector<uint8_t> &session_key)
-            : session_key_(session_key), impl_(std::make_unique<Impl>(session_key)) {}
+            : session_key_(session_key), impl_(std::make_unique<Impl>(session_key))
+        {
+            // Derive separate keys for encryption and MAC to prevent key reuse
+            std::vector<uint8_t> enc_info = {'E', 'N', 'C'};
+            std::vector<uint8_t> mac_info = {'M', 'A', 'C'};
+            
+            encryption_key_ = derive_subkey(session_key, enc_info);
+            mac_key_ = derive_subkey(session_key, mac_info);
+        }
 
         PacketCrypto::~PacketCrypto() = default;
 
@@ -374,6 +402,265 @@ namespace mita
         bool PacketCrypto::verify_hmac(const std::vector<uint8_t> &data, const std::vector<uint8_t> &hmac)
         {
             return impl_->verify_hmac(data, hmac);
+        }
+        
+        // Authenticated Encryption (Encrypt-then-MAC)
+        std::vector<uint8_t> PacketCrypto::encrypt_authenticated(const std::vector<uint8_t> &plaintext)
+        {
+            // Step 1: Encrypt with AES-CBC
+            auto ciphertext = impl_->encrypt(plaintext);  // Returns IV || encrypted_data
+            
+            // Step 2: Compute MAC over IV || ciphertext using separate MAC key
+            unsigned int mac_len;
+            std::vector<uint8_t> mac(EVP_MAX_MD_SIZE);
+            
+            unsigned char *result = HMAC(
+                EVP_sha256(),
+                mac_key_.data(), mac_key_.size(),
+                ciphertext.data(), ciphertext.size(),
+                mac.data(), &mac_len
+            );
+            
+            if (!result)
+            {
+                throw std::runtime_error("Failed to compute MAC for authenticated encryption");
+            }
+            
+            mac.resize(32);  // SHA256 produces 32 bytes
+            
+            // Step 3: Return IV || ciphertext || MAC
+            ciphertext.insert(ciphertext.end(), mac.begin(), mac.end());
+            
+            return ciphertext;
+        }
+        
+        // Authenticated Decryption (Verify-then-Decrypt)
+        std::vector<uint8_t> PacketCrypto::decrypt_authenticated(const std::vector<uint8_t> &data)
+        {
+            // Minimum size: 16 (IV) + 16 (min ciphertext with padding) + 32 (MAC) = 64 bytes
+            if (data.size() < 64)
+            {
+                throw std::invalid_argument("Data too short for authenticated decryption");
+            }
+            
+            // Step 1: Split MAC from encrypted data
+            size_t mac_offset = data.size() - 32;
+            std::vector<uint8_t> received_mac(data.begin() + mac_offset, data.end());
+            std::vector<uint8_t> iv_ciphertext(data.begin(), data.begin() + mac_offset);
+            
+            // Step 2: Verify MAC BEFORE decryption (critical for security!)
+            unsigned int mac_len;
+            std::vector<uint8_t> computed_mac(EVP_MAX_MD_SIZE);
+            
+            unsigned char *result = HMAC(
+                EVP_sha256(),
+                mac_key_.data(), mac_key_.size(),
+                iv_ciphertext.data(), iv_ciphertext.size(),
+                computed_mac.data(), &mac_len
+            );
+            
+            if (!result)
+            {
+                throw std::runtime_error("Failed to compute MAC for verification");
+            }
+            
+            computed_mac.resize(32);
+            
+            // Constant-time comparison to prevent timing attacks
+            if (CRYPTO_memcmp(computed_mac.data(), received_mac.data(), 32) != 0)
+            {
+                throw std::runtime_error("MAC verification failed - data may have been tampered with");
+            }
+            
+            // Step 3: Only decrypt if MAC is valid
+            return impl_->decrypt(iv_ciphertext);
+        }
+
+        // NEW: AES-GCM Authenticated Encryption Implementation
+        std::vector<uint8_t> PacketCrypto::encrypt_gcm(const std::vector<uint8_t> &plaintext,
+                                                        const std::vector<uint8_t> &additional_data)
+        {
+            if (plaintext.empty())
+            {
+                return {};
+            }
+
+            // Generate random 12-byte IV (recommended for GCM)
+            std::vector<uint8_t> iv(12);
+            if (RAND_bytes(iv.data(), 12) != 1)
+            {
+                throw std::runtime_error("Failed to generate IV for GCM");
+            }
+
+            // Create cipher context
+            EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
+            if (!ctx)
+            {
+                throw std::runtime_error("Failed to create cipher context for GCM");
+            }
+
+            // Initialize encryption with AES-128-GCM
+            if (EVP_EncryptInit_ex(ctx, EVP_aes_128_gcm(), nullptr, nullptr, nullptr) != 1)
+            {
+                EVP_CIPHER_CTX_free(ctx);
+                throw std::runtime_error("Failed to initialize GCM encryption");
+            }
+
+            // Set IV length (12 bytes is optimal for GCM)
+            if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, 12, nullptr) != 1)
+            {
+                EVP_CIPHER_CTX_free(ctx);
+                throw std::runtime_error("Failed to set GCM IV length");
+            }
+
+            // Set key and IV
+            if (EVP_EncryptInit_ex(ctx, nullptr, nullptr, encryption_key_.data(), iv.data()) != 1)
+            {
+                EVP_CIPHER_CTX_free(ctx);
+                throw std::runtime_error("Failed to set GCM key and IV");
+            }
+
+            // Add Additional Authenticated Data (AAD) if provided
+            // AAD is authenticated but not encrypted (useful for packet headers)
+            int len;
+            if (!additional_data.empty())
+            {
+                if (EVP_EncryptUpdate(ctx, nullptr, &len, additional_data.data(), 
+                                      static_cast<int>(additional_data.size())) != 1)
+                {
+                    EVP_CIPHER_CTX_free(ctx);
+                    throw std::runtime_error("Failed to set GCM AAD");
+                }
+            }
+
+            // Encrypt plaintext
+            std::vector<uint8_t> ciphertext(plaintext.size() + 16);  // +16 for potential padding
+            if (EVP_EncryptUpdate(ctx, ciphertext.data(), &len, plaintext.data(), 
+                                  static_cast<int>(plaintext.size())) != 1)
+            {
+                EVP_CIPHER_CTX_free(ctx);
+                throw std::runtime_error("Failed to encrypt data with GCM");
+            }
+            int ciphertext_len = len;
+
+            // Finalize encryption
+            if (EVP_EncryptFinal_ex(ctx, ciphertext.data() + len, &len) != 1)
+            {
+                EVP_CIPHER_CTX_free(ctx);
+                throw std::runtime_error("Failed to finalize GCM encryption");
+            }
+            ciphertext_len += len;
+            ciphertext.resize(ciphertext_len);
+
+            // Get the authentication tag (16 bytes for GCM)
+            std::vector<uint8_t> tag(16);
+            if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_GET_TAG, 16, tag.data()) != 1)
+            {
+                EVP_CIPHER_CTX_free(ctx);
+                throw std::runtime_error("Failed to get GCM authentication tag");
+            }
+
+            EVP_CIPHER_CTX_free(ctx);
+
+            // Return: IV (12 bytes) || ciphertext || tag (16 bytes)
+            std::vector<uint8_t> result;
+            result.reserve(12 + ciphertext.size() + 16);
+            result.insert(result.end(), iv.begin(), iv.end());
+            result.insert(result.end(), ciphertext.begin(), ciphertext.end());
+            result.insert(result.end(), tag.begin(), tag.end());
+
+            return result;
+        }
+
+        std::vector<uint8_t> PacketCrypto::decrypt_gcm(const std::vector<uint8_t> &data,
+                                                        const std::vector<uint8_t> &additional_data)
+        {
+            // Minimum size: 12 (IV) + 16 (tag) = 28 bytes
+            if (data.size() < 28)
+            {
+                throw std::invalid_argument("Data too short for GCM decryption");
+            }
+
+            // Extract IV (12 bytes)
+            std::vector<uint8_t> iv(data.begin(), data.begin() + 12);
+
+            // Extract tag (last 16 bytes)
+            std::vector<uint8_t> tag(data.end() - 16, data.end());
+
+            // Extract ciphertext (everything between IV and tag)
+            std::vector<uint8_t> ciphertext(data.begin() + 12, data.end() - 16);
+
+            // Create cipher context
+            EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
+            if (!ctx)
+            {
+                throw std::runtime_error("Failed to create cipher context for GCM decryption");
+            }
+
+            // Initialize decryption with AES-128-GCM
+            if (EVP_DecryptInit_ex(ctx, EVP_aes_128_gcm(), nullptr, nullptr, nullptr) != 1)
+            {
+                EVP_CIPHER_CTX_free(ctx);
+                throw std::runtime_error("Failed to initialize GCM decryption");
+            }
+
+            // Set IV length
+            if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, 12, nullptr) != 1)
+            {
+                EVP_CIPHER_CTX_free(ctx);
+                throw std::runtime_error("Failed to set GCM IV length for decryption");
+            }
+
+            // Set key and IV
+            if (EVP_DecryptInit_ex(ctx, nullptr, nullptr, encryption_key_.data(), iv.data()) != 1)
+            {
+                EVP_CIPHER_CTX_free(ctx);
+                throw std::runtime_error("Failed to set GCM key and IV for decryption");
+            }
+
+            // Add Additional Authenticated Data (AAD) if provided
+            int len;
+            if (!additional_data.empty())
+            {
+                if (EVP_DecryptUpdate(ctx, nullptr, &len, additional_data.data(), 
+                                      static_cast<int>(additional_data.size())) != 1)
+                {
+                    EVP_CIPHER_CTX_free(ctx);
+                    throw std::runtime_error("Failed to set GCM AAD for decryption");
+                }
+            }
+
+            // Decrypt ciphertext
+            std::vector<uint8_t> plaintext(ciphertext.size());
+            if (EVP_DecryptUpdate(ctx, plaintext.data(), &len, ciphertext.data(), 
+                                  static_cast<int>(ciphertext.size())) != 1)
+            {
+                EVP_CIPHER_CTX_free(ctx);
+                throw std::runtime_error("Failed to decrypt data with GCM");
+            }
+            int plaintext_len = len;
+
+            // Set expected tag value
+            if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_TAG, 16, tag.data()) != 1)
+            {
+                EVP_CIPHER_CTX_free(ctx);
+                throw std::runtime_error("Failed to set GCM tag for verification");
+            }
+
+            // Finalize decryption and verify tag
+            // This will fail if the tag doesn't match (authentication failure)
+            int ret = EVP_DecryptFinal_ex(ctx, plaintext.data() + len, &len);
+            EVP_CIPHER_CTX_free(ctx);
+
+            if (ret != 1)
+            {
+                throw std::runtime_error("GCM authentication failed - data may have been tampered with");
+            }
+
+            plaintext_len += len;
+            plaintext.resize(plaintext_len);
+
+            return plaintext;
         }
 
         // HandshakeManager implementation
@@ -491,10 +778,57 @@ namespace mita
                 }
             }
         }
+        
+        bool HandshakeManager::check_rate_limit(const std::string &source_id)
+        {
+            std::lock_guard<std::mutex> lock(rate_limit_mutex_);
+            auto now = std::chrono::steady_clock::now();
+            
+            auto &state = rate_limits_[source_id];
+            
+            // Remove attempts older than the window
+            while (!state.attempts.empty())
+            {
+                auto age = std::chrono::duration_cast<std::chrono::seconds>(
+                    now - state.attempts.front());
+                
+                if (age > state.window)
+                {
+                    state.attempts.pop_front();
+                }
+                else
+                {
+                    break;
+                }
+            }
+            
+            // Check if too many attempts
+            if (state.attempts.size() >= state.max_attempts)
+            {
+                auto logger = core::get_logger("Protocol");
+                if (logger)
+                {
+                    logger->warning("Rate limit exceeded for handshake",
+                                  core::LogContext()
+                                      .add("source_id", source_id)
+                                      .add("attempts", state.attempts.size()));
+                }
+                return false;  // Rate limit exceeded
+            }
+            
+            // Record this attempt
+            state.attempts.push_back(now);
+            return true;  // Allowed
+        }
 
         std::unique_ptr<ProtocolPacket> HandshakeManager::create_challenge_packet(const std::string &device_id, const std::vector<uint8_t> &nonce1)
         {
             auto nonce2 = generate_nonce();
+            
+            // Get current timestamp (Unix time in milliseconds)
+            auto now = std::chrono::system_clock::now();
+            uint64_t timestamp_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                now.time_since_epoch()).count();
 
             // Store / update handshake state with nonce1 and nonce2
             {
@@ -507,10 +841,17 @@ namespace mita
                 }
                 state.nonce2 = nonce2;
                 state.timestamp = std::chrono::steady_clock::now();
+                state.creation_time_ms = timestamp_ms;  // Store for freshness validation
             }
 
-            // Create payload: nonce2
+            // Create payload: nonce2 (16 bytes) || timestamp (8 bytes)
             std::vector<uint8_t> payload = nonce2;
+            
+            // Append timestamp (big-endian, 8 bytes)
+            for (int i = 7; i >= 0; i--)
+            {
+                payload.push_back((timestamp_ms >> (i * 8)) & 0xFF);
+            }
 
             return std::make_unique<ProtocolPacket>(MessageType::CHALLENGE, ROUTER_ADDRESS, 0, payload);
         }
@@ -538,12 +879,36 @@ namespace mita
                     logger->debug("verify_auth_packet: no pending handshake", core::LogContext().add("device_id", device_id));
                 return false;
             }
+            
+            // Validate handshake freshness (30 second window)
+            if (it->second.creation_time_ms > 0)
+            {
+                auto now = std::chrono::system_clock::now();
+                uint64_t current_time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    now.time_since_epoch()).count();
+                
+                const uint64_t MAX_HANDSHAKE_AGE_MS = 30000;  // 30 seconds
+                uint64_t handshake_age = current_time_ms - it->second.creation_time_ms;
+                
+                if (handshake_age > MAX_HANDSHAKE_AGE_MS)
+                {
+                    if (logger)
+                        logger->warning("Handshake expired - possible replay attack",
+                                      core::LogContext()
+                                          .add("device_id", device_id)
+                                          .add("age_ms", handshake_age));
+                    
+                    // Remove expired handshake
+                    pending_handshakes_.erase(it);
+                    return false;
+                }
+            }
 
             const auto &payload = packet.get_payload();
             if (logger)
                 logger->debug("verify_auth_packet: received payload", core::LogContext().add("size", payload.size()));
-            if (payload.size() < 20)
-            { // 16 bytes HMAC + 4 bytes nonce1
+            if (payload.size() < 32)
+            { // 16 bytes HMAC + 16 bytes nonce1 (increased from 4 to 16)
                 if (logger)
                     logger->debug("verify_auth_packet: payload too small", core::LogContext().add("size", payload.size()));
                 return false;
@@ -552,42 +917,36 @@ namespace mita
             // Extract received tag (first 16 bytes)
             std::vector<uint8_t> received_tag(payload.begin(), payload.begin() + 16);
 
-            // Extract received nonce1 (next 4 bytes big-endian)
-            uint32_t received_nonce1 = 0;
-            for (int i = 0; i < 4; i++)
-            {
-                received_nonce1 = (received_nonce1 << 8) | payload[16 + i];
-            }
+            // Extract received nonce1 (next 16 bytes)
+            std::vector<uint8_t> received_nonce1(payload.begin() + 16, payload.begin() + 32);
 
-            // Expected nonce1 from stored state
-            uint32_t expected_nonce1 = 0;
-            const auto &nonce1_vec = it->second.nonce1;
-            if (nonce1_vec.size() >= 4)
+            // Verify nonce1 matches what was sent in HELLO
+            const auto &expected_nonce1 = it->second.nonce1;
+            if (expected_nonce1.size() != 16)
             {
-                for (int i = 0; i < 4; i++)
-                {
-                    expected_nonce1 = (expected_nonce1 << 8) | nonce1_vec[i];
-                }
+                if (logger)
+                    logger->debug("verify_auth_packet: stored nonce1 invalid size", core::LogContext().add("size", expected_nonce1.size()));
+                return false;
             }
 
             if (received_nonce1 != expected_nonce1)
             {
                 if (logger)
-                    logger->debug("verify_auth_packet: nonce1 mismatch", core::LogContext().add("expected", expected_nonce1).add("received", received_nonce1));
+                    logger->debug("verify_auth_packet: nonce1 mismatch");
                 return false;
             }
 
-            // Construct data for HMAC: nonce2 (4 bytes) + device_id + router_id
+            // Construct data for HMAC: nonce2 (16 bytes) + device_id + router_id
             const auto &nonce2_vec = it->second.nonce2;
-            if (nonce2_vec.size() < 4)
+            if (nonce2_vec.size() != 16)
             {
                 if (logger)
-                    logger->debug("verify_auth_packet: nonce2 missing or too small", core::LogContext().add("size", nonce2_vec.size()));
+                    logger->debug("verify_auth_packet: nonce2 invalid size", core::LogContext().add("size", nonce2_vec.size()));
                 return false;
             }
             std::vector<uint8_t> hmac_data;
-            hmac_data.reserve(4 + device_id.size() + router_id_.size());
-            hmac_data.insert(hmac_data.end(), nonce2_vec.begin(), nonce2_vec.begin() + 4);
+            hmac_data.reserve(16 + device_id.size() + router_id_.size());
+            hmac_data.insert(hmac_data.end(), nonce2_vec.begin(), nonce2_vec.end());  // Full 16 bytes
             hmac_data.insert(hmac_data.end(), device_id.begin(), device_id.end());
             hmac_data.insert(hmac_data.end(), router_id_.begin(), router_id_.end());
 
@@ -642,27 +1001,27 @@ namespace mita
                 auto it = pending_handshakes_.find(device_id);
                 if (it != pending_handshakes_.end())
                 {
-                    nonce1_copy = it->second.nonce1; // should be 4 bytes
+                    nonce1_copy = it->second.nonce1; // should be 16 bytes
                 }
             }
 
-            if (nonce1_copy.size() >= 4)
+            if (nonce1_copy.size() == 16)
             {
                 unsigned int hmac_len = 0;
                 std::vector<uint8_t> tag(EVP_MAX_MD_SIZE);
                 unsigned char *result = HMAC(EVP_sha256(),
                                              shared_secret_.data(), static_cast<int>(shared_secret_.size()),
-                                             nonce1_copy.data(), 4,
+                                             nonce1_copy.data(), 16,  // Full 16 bytes
                                              tag.data(), &hmac_len);
                 if (result)
                 {
-                    tag.resize(16); // truncate to 16 bytes like Python
+                    tag.resize(16); // truncate to 16 bytes
                     payload.insert(payload.end(), tag.begin(), tag.end());
                 }
             }
             else
             {
-                // Fallback: no nonce captured, leave out HMAC (client may reject)
+                // Fallback: no nonce captured or invalid size, leave out HMAC (client may reject)
             }
 
             // Append assigned address (big-endian)

@@ -199,14 +199,29 @@ namespace mita
                         }
                         else
                         {
-
-                            if (packet.get_message_type() == MessageType::HEARTBEAT)
+                            // Route packets based on type
+                            auto msg_type = packet.get_message_type();
+                            
+                            if (msg_type == MessageType::HEARTBEAT)
                             {
                                 handle_heartbeat_packet(packet);
                             }
-                            else
+                            else if (msg_type == MessageType::DATA)
+                            {
                                 handle_data_packet(packet);
-
+                            }
+                            else if (msg_type == MessageType::CONTROL)
+                            {
+                                // Control packets could be handled here in the future
+                                handle_data_packet(packet);
+                            }
+                            else
+                            {
+                                logger_->warning("Received unknown packet type from authenticated device",
+                                                core::LogContext()
+                                                    .add("device_id", device_id_)
+                                                    .add("packet_type", static_cast<int>(msg_type)));
+                            }
                         }
                     }
                     else
@@ -380,37 +395,21 @@ namespace mita
                         {
                             device_id_ = device_id;
 
-                            // Register device in device management
-                            if (device_management_.register_device(device_id_, core::TransportType::WIFI))
+                            // Store device_id and send CHALLENGE without registering yet
+                            // Registration happens after AUTH verification for security
+                            logger_->info("Received HELLO from device",
+                                          core::LogContext().add("device_id", device_id_));
+
+                            // Create challenge packet
+                            auto challenge_packet = handshake_manager_->create_challenge_packet(device_id_, nonce1);
+                            if (challenge_packet && send_packet(*challenge_packet))
                             {
-                                // Get assigned address from routing service
-                                assigned_address_ = routing_service_.get_device_address(device_id_);
-
-                                if (assigned_address_ == 0)
-                                {
-                                    logger_->error("Device registered but no address assigned",
-                                                   core::LogContext().add("device_id", device_id_));
-                                    device_management_.remove_device(device_id_);
-                                    return;
-                                }
-
-                                // Create challenge packet
-                                auto challenge_packet = handshake_manager_->create_challenge_packet(device_id_, nonce1);
-                                if (challenge_packet && send_packet(*challenge_packet))
-                                {
-                                    logger_->info("Sent challenge to device",
-                                                  core::LogContext().add("device_id", device_id_).add("assigned_address", assigned_address_));
-                                }
-                                else
-                                {
-                                    logger_->error("Failed to send challenge packet",
-                                                   core::LogContext().add("device_id", device_id_));
-                                    device_management_.remove_device(device_id_);
-                                }
+                                logger_->info("Sent CHALLENGE to device",
+                                              core::LogContext().add("device_id", device_id_));
                             }
                             else
                             {
-                                logger_->error("Failed to register device",
+                                logger_->error("Failed to send CHALLENGE packet",
                                                core::LogContext().add("device_id", device_id_));
                             }
                         }
@@ -438,11 +437,32 @@ namespace mita
                     // Verify authentication packet
                     if (handshake_manager_->verify_auth_packet(device_id_, packet))
                     {
-                        // Authentication successful
+                        // Authentication successful - NOW register the device
                         logger_->info("Device authentication successful",
                                       core::LogContext().add("device_id", device_id_));
 
-                        // Create AUTH_ACK packet before completing handshake
+                        // Register device in device management (only after auth verification)
+                        if (!device_management_.register_device(device_id_, core::TransportType::WIFI))
+                        {
+                            logger_->error("Failed to register device after authentication",
+                                           core::LogContext().add("device_id", device_id_));
+                            running_ = false;
+                            return;
+                        }
+
+                        // Get assigned address from routing service
+                        assigned_address_ = routing_service_.get_device_address(device_id_);
+
+                        if (assigned_address_ == 0)
+                        {
+                            logger_->error("Device registered but no address assigned",
+                                           core::LogContext().add("device_id", device_id_));
+                            device_management_.remove_device(device_id_);
+                            running_ = false;
+                            return;
+                        }
+
+                        // Create AUTH_ACK packet with assigned address
                         auto auth_ack_packet = handshake_manager_->create_auth_ack_packet(device_id_, assigned_address_);
 
                         if (auth_ack_packet && send_packet(*auth_ack_packet))
@@ -476,6 +496,7 @@ namespace mita
                             logger_->error("Failed to send AUTH_ACK packet",
                                            core::LogContext().add("device_id", device_id_));
                             device_management_.remove_device(device_id_);
+                            running_ = false;
                         }
                     }
                     else
@@ -483,7 +504,6 @@ namespace mita
                         // Authentication failed
                         logger_->warning("Authentication verification failed",
                                          core::LogContext().add("device_id", device_id_));
-                        device_management_.remove_device(device_id_);
                         running_ = false;
                     }
                 }

@@ -9,45 +9,15 @@ namespace mita
     namespace services
     {
 
-        PacketMonitorService::PacketMonitorService(std::shared_ptr<mita::db::Storage> storage, size_t max_packets)
+        PacketMonitorService::PacketMonitorService(std::shared_ptr<mita::db::Storage> storage)
             : logger_(core::get_logger("PacketMonitor")),
               storage_(storage),
-              max_packets_(max_packets),
               metrics_start_time_(std::chrono::steady_clock::now()),
               last_metrics_update_(std::chrono::steady_clock::now())
         {
             logger_->info("Packet Monitor Service initialized",
                          core::LogContext()
-                            .add("max_packets", max_packets)
                             .add("database_enabled", storage_ != nullptr));
-            // If storage is provided, load recent packets from DB into memory
-            try {
-                if (storage_) {
-                    using namespace sqlite_orm;
-                    auto rows = storage_->get_all<mita::db::MonitoredPacket>();
-                    // Load most recent up to max_packets_ into deque (most recent first)
-                    size_t count = 0;
-                    for (auto it = rows.rbegin(); it != rows.rend() && count < max_packets_; ++it, ++count) {
-                        CapturedPacket p;
-                        p.id = it->packet_id;
-                        p.timestamp = std::chrono::system_clock::time_point(std::chrono::milliseconds(it->timestamp));
-                        p.direction = it->direction;
-                        p.source_addr = static_cast<uint16_t>(it->source_addr);
-                        p.dest_addr = static_cast<uint16_t>(it->dest_addr);
-                        p.message_type = it->message_type;
-                        p.payload_size = static_cast<size_t>(it->payload_size);
-                        p.transport = it->transport;
-                        p.encrypted = it->encrypted != 0;
-                        p.raw_data = hex_to_bytes(it->raw_data);
-                        p.decoded_header = it->decoded_header;
-                        p.decoded_payload = it->decoded_payload;
-                        packets_.push_back(std::move(p));
-                    }
-                }
-            } catch (const std::exception &e) {
-                logger_->warning("Failed to load packets from DB",
-                                 core::LogContext().add("error", e.what()));
-            }
         }
 
         PacketMonitorService::~PacketMonitorService()
@@ -75,7 +45,17 @@ namespace mita
                 try {
                     captured.source_addr = packet.get_source_addr();
                     captured.dest_addr = packet.get_dest_addr();
-                    captured.message_type = message_type_to_string(packet.get_message_type());
+                    
+                    // Debug: Check the actual message type value
+                    auto msg_type = packet.get_message_type();
+                    uint8_t msg_type_raw = static_cast<uint8_t>(msg_type);
+                    logger_->debug("Capturing packet",
+                                 core::LogContext()
+                                     .add("msg_type_raw", static_cast<int>(msg_type_raw))
+                                     .add("source", captured.source_addr)
+                                     .add("dest", captured.dest_addr));
+                    
+                    captured.message_type = message_type_to_string(msg_type);
                     captured.payload_size = packet.get_payload().size();
                     captured.transport = (transport == core::TransportType::WIFI) ? "wifi" : "ble";
                     captured.encrypted = packet.is_encrypted();
@@ -98,7 +78,7 @@ namespace mita
                 bool is_upload = (direction == "outbound" || direction == "forwarded");
                 update_metrics(captured.payload_size + 16, is_upload); // +16 for header overhead
 
-                // Log before moving
+                // Log before saving
                 logger_->debug("Captured packet",
                              core::LogContext()
                                  .add("id", captured.id)
@@ -108,19 +88,9 @@ namespace mita
                 // Save to database if storage is available
                 if (storage_) {
                     save_packet_to_db(captured);
-                }
-
-                {
-                    std::lock_guard<std::mutex> lock(packets_mutex_);
-
-                    // Add to front (most recent first)
-                    packets_.push_front(std::move(captured)); // Use move semantics
-
-                    // Remove oldest if exceeding limit
-                    while (packets_.size() > max_packets_)
-                    {
-                        packets_.pop_back();
-                    }
+                } else {
+                    logger_->warning("Storage not available, packet not saved",
+                                   core::LogContext().add("packet_id", captured.id));
                 }
             }
             catch (const std::exception &e)
@@ -132,21 +102,50 @@ namespace mita
 
         std::vector<CapturedPacket> PacketMonitorService::get_packets(size_t limit, size_t offset) const
         {
-            std::lock_guard<std::mutex> lock(packets_mutex_);
-
             std::vector<CapturedPacket> result;
-            
-            if (offset >= packets_.size())
-            {
+
+            if (!storage_) {
+                logger_->warning("Storage not available, cannot retrieve packets");
                 return result;
             }
 
-            size_t end = std::min(offset + limit, packets_.size());
-            result.reserve(end - offset);
+            try {
+                std::lock_guard<std::mutex> lock(db_mutex_);
+                using namespace sqlite_orm;
 
-            for (size_t i = offset; i < end; ++i)
-            {
-                result.push_back(packets_[i]);
+                // Query all packets ordered by timestamp DESC (most recent first)
+                auto all_rows = storage_->get_all<mita::db::MonitoredPacket>(
+                    order_by(&mita::db::MonitoredPacket::timestamp).desc()
+                );
+
+                // Apply manual pagination
+                size_t start_idx = std::min(offset, all_rows.size());
+                size_t end_idx = std::min(offset + limit, all_rows.size());
+
+                if (start_idx < end_idx) {
+                    result.reserve(end_idx - start_idx);
+
+                    for (size_t i = start_idx; i < end_idx; ++i) {
+                        const auto &row = all_rows[i];
+                        CapturedPacket p;
+                        p.id = row.packet_id;
+                        p.timestamp = std::chrono::system_clock::time_point(std::chrono::milliseconds(row.timestamp));
+                        p.direction = row.direction;
+                        p.source_addr = static_cast<uint16_t>(row.source_addr);
+                        p.dest_addr = static_cast<uint16_t>(row.dest_addr);
+                        p.message_type = row.message_type;
+                        p.payload_size = static_cast<size_t>(row.payload_size);
+                        p.transport = row.transport;
+                        p.encrypted = row.encrypted != 0;
+                        p.raw_data = hex_to_bytes(row.raw_data);
+                        p.decoded_header = row.decoded_header;
+                        p.decoded_payload = row.decoded_payload;
+                        result.push_back(std::move(p));
+                    }
+                }
+            } catch (const std::exception &e) {
+                logger_->error("Failed to retrieve packets from database",
+                             core::LogContext().add("error", e.what()));
             }
 
             return result;
@@ -159,44 +158,83 @@ namespace mita
 
         CapturedPacket PacketMonitorService::get_packet_by_id(const std::string &id) const
         {
-            std::lock_guard<std::mutex> lock(packets_mutex_);
-
-            auto it = std::find_if(packets_.begin(), packets_.end(),
-                                   [&id](const CapturedPacket &p) { return p.id == id; });
-
-            if (it != packets_.end())
-            {
-                return *it;
+            if (!storage_) {
+                throw std::runtime_error("Storage not available");
             }
 
-            throw std::runtime_error("Packet not found: " + id);
+            try {
+                std::lock_guard<std::mutex> lock(db_mutex_);
+                using namespace sqlite_orm;
+
+                // Query packet by packet_id
+                auto rows = storage_->get_all<mita::db::MonitoredPacket>(
+                    where(c(&mita::db::MonitoredPacket::packet_id) == id)
+                );
+
+                if (rows.empty()) {
+                    throw std::runtime_error("Packet not found: " + id);
+                }
+
+                const auto &row = rows[0];
+                CapturedPacket p;
+                p.id = row.packet_id;
+                p.timestamp = std::chrono::system_clock::time_point(std::chrono::milliseconds(row.timestamp));
+                p.direction = row.direction;
+                p.source_addr = static_cast<uint16_t>(row.source_addr);
+                p.dest_addr = static_cast<uint16_t>(row.dest_addr);
+                p.message_type = row.message_type;
+                p.payload_size = static_cast<size_t>(row.payload_size);
+                p.transport = row.transport;
+                p.encrypted = row.encrypted != 0;
+                p.raw_data = hex_to_bytes(row.raw_data);
+                p.decoded_header = row.decoded_header;
+                p.decoded_payload = row.decoded_payload;
+
+                return p;
+            } catch (const std::exception &e) {
+                logger_->error("Failed to retrieve packet from database",
+                             core::LogContext()
+                                .add("packet_id", id)
+                                .add("error", e.what()));
+                throw;
+            }
         }
 
         void PacketMonitorService::clear_packets()
         {
-            std::lock_guard<std::mutex> lock(packets_mutex_);
-            packets_.clear();
-            logger_->info("Cleared all captured packets");
-        }
-
-        void PacketMonitorService::set_max_packets(size_t max)
-        {
-            std::lock_guard<std::mutex> lock(packets_mutex_);
-            max_packets_ = max;
-
-            // Trim if needed
-            while (packets_.size() > max_packets_)
-            {
-                packets_.pop_back();
+            if (!storage_) {
+                logger_->warning("Storage not available, cannot clear packets");
+                return;
             }
 
-            logger_->info("Updated max packets", core::LogContext().add("max_packets", max));
+            try {
+                std::lock_guard<std::mutex> lock(db_mutex_);
+                using namespace sqlite_orm;
+                storage_->remove_all<mita::db::MonitoredPacket>();
+                logger_->info("Cleared all captured packets from database");
+            } catch (const std::exception &e) {
+                logger_->error("Failed to clear packets from database",
+                             core::LogContext().add("error", e.what()));
+                throw;
+            }
         }
 
         size_t PacketMonitorService::get_packet_count() const
         {
-            std::lock_guard<std::mutex> lock(packets_mutex_);
-            return packets_.size();
+            if (!storage_) {
+                logger_->warning("Storage not available, cannot count packets");
+                return 0;
+            }
+
+            try {
+                std::lock_guard<std::mutex> lock(db_mutex_);
+                using namespace sqlite_orm;
+                return storage_->count<mita::db::MonitoredPacket>();
+            } catch (const std::exception &e) {
+                logger_->error("Failed to count packets from database",
+                             core::LogContext().add("error", e.what()));
+                return 0;
+            }
         }
 
         std::string PacketMonitorService::generate_packet_id()
@@ -228,6 +266,8 @@ namespace mita
                 return "ACK";
             case MessageType::CONTROL:
                 return "CONTROL";
+            case MessageType::HEARTBEAT:
+                return "HEARTBEAT";
             case MessageType::ERROR:
                 return "ERROR";
             default:

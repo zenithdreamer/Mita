@@ -12,8 +12,8 @@ public:
     virtual void disconnect() = 0;
     virtual bool isConnected() const = 0;
 
-    virtual bool sendPacket(const ProtocolPacket& packet) = 0;
-    virtual bool receivePacket(ProtocolPacket& packet, unsigned long timeout_ms = 1000) = 0;
+    virtual bool sendPacket(const BasicProtocolPacket& packet) = 0;
+    virtual bool receivePacket(BasicProtocolPacket& packet, unsigned long timeout_ms = 1000) = 0;
 
     virtual TransportType getType() const = 0;
     virtual String getConnectionInfo() const = 0;

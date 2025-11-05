@@ -48,11 +48,11 @@ namespace mita
         class PacketMonitorService
         {
         public:
-            PacketMonitorService(std::shared_ptr<mita::db::Storage> storage = nullptr, size_t max_packets = 1000);
+            PacketMonitorService(std::shared_ptr<mita::db::Storage> storage = nullptr);
             ~PacketMonitorService();
 
             // Capture packets
-            void capture_packet(const protocol::ProtocolPacket &packet, 
+            void capture_packet(const protocol::ProtocolPacket &packet,
                               const std::string &direction,
                               core::TransportType transport);
 
@@ -63,7 +63,6 @@ namespace mita
 
             // Control
             void clear_packets();
-            void set_max_packets(size_t max);
             size_t get_packet_count() const;
 
             // Enable/disable monitoring
@@ -94,9 +93,7 @@ namespace mita
 
             std::shared_ptr<core::Logger> logger_;
             std::shared_ptr<mita::db::Storage> storage_;
-            mutable std::mutex packets_mutex_;
-            std::deque<CapturedPacket> packets_;
-            size_t max_packets_;
+            mutable std::mutex db_mutex_;
             std::atomic<bool> enabled_{true};
             std::atomic<uint64_t> packet_counter_{0};
 

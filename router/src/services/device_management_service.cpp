@@ -219,7 +219,7 @@ namespace mita
                     break;
 
                 case MessageType::DATA:
-                    process_data_packet(device_id, packet);
+                    process_data_packet(device_id, packet, transport_type);
                     break;
 
                 case MessageType::CONTROL:
@@ -522,7 +522,8 @@ namespace mita
         }
 
         void DeviceManagementService::process_data_packet(const std::string &device_id,
-                                                          const protocol::ProtocolPacket &packet)
+                                                          const protocol::ProtocolPacket &packet,
+                                                          core::TransportType transport_type)
         {
             const ManagedDevice *device = get_device_info(device_id);
             if (!device || (device->state != DeviceState::ACTIVE && device->state != DeviceState::AUTHENTICATED))
@@ -633,6 +634,9 @@ namespace mita
             }
 
             statistics_service_.record_packet_routed(payload.size());
+            
+            // Send ACK packet back to device to confirm receipt
+            send_ack_packet(device_id, packet.get_sequence_number(), transport_type);
         }
 
         void DeviceManagementService::process_control_packet(const std::string &device_id,
@@ -643,6 +647,62 @@ namespace mita
 
             // Handle control messages (ping, configuration updates, etc.)
             // TODO: Implement control message handling
+        }
+
+        void DeviceManagementService::send_ack_packet(const std::string &device_id, 
+                                                      uint16_t sequence_number,
+                                                      core::TransportType transport_type)
+        {
+            const ManagedDevice *device = get_device_info(device_id);
+            if (!device || device->state != DeviceState::ACTIVE)
+            {
+                return;
+            }
+
+            try
+            {
+                // Create ACK packet with the sequence number being acknowledged
+                std::vector<uint8_t> payload;
+                payload.push_back((sequence_number >> 8) & 0xFF);
+                payload.push_back(sequence_number & 0xFF);
+
+                protocol::ProtocolPacket ack_packet(
+                    MessageType::ACK,
+                    ROUTER_ADDRESS,              // source is router
+                    device->assigned_address,    // destination is the device
+                    payload
+                );
+
+                // Capture outbound ACK for monitoring before sending
+                if (packet_monitor_)
+                {
+                    packet_monitor_->capture_packet(ack_packet, "outbound", transport_type);
+                }
+
+                // Forward ACK packet to device via routing service
+                if (routing_service_.forward_to_device(device->assigned_address, ack_packet))
+                {
+                    logger_->debug("Sent ACK packet",
+                                  core::LogContext()
+                                      .add("device_id", device_id)
+                                      .add("sequence", sequence_number));
+                }
+                else
+                {
+                    logger_->warning("Failed to forward ACK packet",
+                                    core::LogContext()
+                                        .add("device_id", device_id)
+                                        .add("sequence", sequence_number));
+                }
+            }
+            catch (const std::exception &e)
+            {
+                logger_->warning("Failed to send ACK packet",
+                                core::LogContext()
+                                    .add("device_id", device_id)
+                                    .add("sequence", sequence_number)
+                                    .add("error", e.what()));
+            }
         }
 
         void DeviceManagementService::notify_device_connected(const std::string &device_id)

@@ -96,9 +96,6 @@ struct BasicProtocolPacket
     uint8_t payload[MAX_PAYLOAD_SIZE];
 };
 
-// Alias for backward compatibility
-typedef BasicProtocolPacket ProtocolPacket;
-
 // Configuration structures
 struct NetworkConfig
 {

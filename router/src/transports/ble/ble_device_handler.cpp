@@ -231,13 +231,8 @@ namespace mita
                             logger_->info("Received HELLO from BLE device",
                                          core::LogContext{}.add("device_id", device_id_));
 
-                            // register device in device management (not good tho must move to after authentication)
-                            if (!device_management_.register_device(device_id_, core::TransportType::BLE))
-                            {
-                                logger_->warning("Failed to register BLE device",
-                                                core::LogContext{}.add("device_id", device_id_));
-                                return;
-                            }
+                            // Store device_id and send CHALLENGE without registering yet
+                            // Registration happens after AUTH verification for security
 
                             // Create and send CHALLENGE
                             auto challenge_packet = handshake_manager_->create_challenge_packet(device_id_, nonce);
@@ -258,12 +253,28 @@ namespace mita
                             return;
                         }
 
-                        // verify authen
+                        // Verify authentication - only register after successful verification
                         if (handshake_manager_->verify_auth_packet(device_id_, packet))
                         {
-                            //assign address
+                            // Authentication successful - NOW register the device
+                            if (!device_management_.register_device(device_id_, core::TransportType::BLE))
+                            {
+                                logger_->warning("Failed to register BLE device after authentication",
+                                                core::LogContext{}.add("device_id", device_id_));
+                                return;
+                            }
+
+                            // Assign address
                             assigned_address_ = routing_service_.add_device(
                                 device_id_, core::TransportType::BLE, this);
+
+                            if (assigned_address_ == 0)
+                            {
+                                logger_->error("Failed to assign address to BLE device",
+                                              core::LogContext{}.add("device_id", device_id_));
+                                device_management_.remove_device(device_id_);
+                                return;
+                            }
 
                             // Create AUTH_ACK before completing handshake
                             auto auth_ack_packet = handshake_manager_->create_auth_ack_packet(
@@ -271,6 +282,9 @@ namespace mita
 
                             // Complete handshake and get session crypto
                             session_crypto_ = handshake_manager_->get_session_crypto(device_id_);
+                            
+                            // Remove handshake state as it's no longer needed
+                            handshake_manager_->remove_handshake(device_id_);
 
                             // Authenticate device in management service
                             if (session_crypto_)

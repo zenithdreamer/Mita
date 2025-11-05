@@ -8,7 +8,7 @@
 
 class WiFiTransport : public ITransport {
 private:
-    WiFiClient client;
+    mutable WiFiClient client;
     bool connected;
     String discovered_ssid;
     String shared_secret;
@@ -26,8 +26,8 @@ public:
     void disconnect() override;
     bool isConnected() const override;
 
-    bool sendPacket(const ProtocolPacket& packet) override;
-    bool receivePacket(ProtocolPacket& packet, unsigned long timeout_ms = 1000) override;
+    bool sendPacket(const BasicProtocolPacket& packet) override;
+    bool receivePacket(BasicProtocolPacket& packet, unsigned long timeout_ms = 1000) override;
 
     TransportType getType() const override;
     String getConnectionInfo() const override;

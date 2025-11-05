@@ -54,7 +54,7 @@ namespace mita
                 statistics_service_ = std::make_unique<services::StatisticsService>();
                 device_management_ = std::make_shared<services::DeviceManagementService>(
                     *routing_service_, *statistics_service_);
-                packet_monitor_ = std::make_shared<services::PacketMonitorService>(storage_, 1000); // Keep last 1000 packets
+                packet_monitor_ = std::make_shared<services::PacketMonitorService>(storage_);
 
                 // Connect packet monitor to services
                 routing_service_->set_packet_monitor(packet_monitor_);

@@ -92,9 +92,6 @@ public:
       offsetVal = 0;
     }
 
-    printf("[API] GET /api/packets - request received (limit=%d, offset=%d)\n", limitVal, offsetVal);
-    fflush(stdout);
-
     auto dto = PacketListDto::createShared();
     dto->packets = oatpp::Vector<oatpp::Object<PacketInfoDto>>::createShared();
 

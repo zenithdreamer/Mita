@@ -69,11 +69,8 @@ public:
 
     // Check if path is public
     if (isPublicPath(path->c_str())) {
-      printf("[AUTH] Public path: %s - skipping authentication\n", path->c_str());
       return nullptr; // Continue to the handler
     }
-
-    printf("[AUTH] Protected path: %s - checking authentication\n", path->c_str());
 
     // Get session token from cookies
     std::string sessionToken = getSessionTokenFromCookies(request);
@@ -114,10 +111,6 @@ public:
 
       return response;
     }
-
-    printf("[AUTH] Session valid for user: %s (ID: %ld) - access granted\n",
-           validateResult.username.c_str(), validateResult.userId);
-    fflush(stdout);
 
     // Continue to the handler
     return nullptr;

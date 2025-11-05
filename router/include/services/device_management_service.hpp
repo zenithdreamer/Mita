@@ -128,8 +128,11 @@ namespace mita
         private:
             // Internal packet processing
             void process_hello_packet(const std::string &device_id, const protocol::ProtocolPacket &packet);
-            void process_data_packet(const std::string &device_id, const protocol::ProtocolPacket &packet);
+            void process_data_packet(const std::string &device_id, const protocol::ProtocolPacket &packet, core::TransportType transport_type);
             void process_control_packet(const std::string &device_id, const protocol::ProtocolPacket &packet);
+            
+            // ACK packet sending
+            void send_ack_packet(const std::string &device_id, uint16_t sequence_number, core::TransportType transport_type);
 
             // Device management helpers
             ManagedDevice *find_device(const std::string &device_id);

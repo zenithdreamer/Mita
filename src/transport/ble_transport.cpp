@@ -135,7 +135,7 @@ bool BLETransport::isConnected() const
     return ble_connected && client_connected;
 }
 
-bool BLETransport::sendPacket(const ProtocolPacket &packet)
+bool BLETransport::sendPacket(const BasicProtocolPacket &packet)
 {
     if (!isConnected() || !characteristic)
     {
@@ -159,7 +159,7 @@ bool BLETransport::sendPacket(const ProtocolPacket &packet)
     }
 }
 
-bool BLETransport::receivePacket(ProtocolPacket &packet, unsigned long timeout_ms)
+bool BLETransport::receivePacket(BasicProtocolPacket &packet, unsigned long timeout_ms)
 {
     unsigned long start_time = millis();
 

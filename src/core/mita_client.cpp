@@ -129,7 +129,7 @@ String MitaClient::getDeviceId() const
 bool MitaClient::sendHeartbeat()
 {
 
-    ProtocolPacket packet;
+    BasicProtocolPacket packet;
     packet.version_flags = (PROTOCOL_VERSION << 4);
     packet.msg_type = MSG_HEARTBEAT;
     packet.source_addr = assigned_address;
@@ -218,7 +218,7 @@ bool MitaClient::performHandshake()
 
 bool MitaClient::sendHello()
 {
-    ProtocolPacket packet;
+    BasicProtocolPacket packet;
     packet.version_flags = (PROTOCOL_VERSION << 4);
     packet.msg_type = MSG_HELLO;
     packet.source_addr = UNASSIGNED_ADDRESS;
@@ -258,7 +258,7 @@ bool MitaClient::sendHello()
 
 bool MitaClient::receiveChallenge()
 {
-    ProtocolPacket packet;
+    BasicProtocolPacket packet;
     if (!transport->receivePacket(packet, 5000) || packet.msg_type != MSG_CHALLENGE)
     {
         return false;
@@ -280,7 +280,7 @@ bool MitaClient::receiveChallenge()
 
 bool MitaClient::sendAuth()
 {
-    ProtocolPacket packet;
+    BasicProtocolPacket packet;
     packet.version_flags = (PROTOCOL_VERSION << 4);
     packet.msg_type = MSG_AUTH;
     packet.source_addr = UNASSIGNED_ADDRESS;
@@ -331,7 +331,7 @@ bool MitaClient::sendAuth()
 
 bool MitaClient::receiveAuthAck()
 {
-    ProtocolPacket packet;
+    BasicProtocolPacket packet;
     if (!transport->receivePacket(packet, 5000) || packet.msg_type != MSG_AUTH_ACK)
     {
         return false;
@@ -390,7 +390,7 @@ bool MitaClient::receiveAuthAck()
 
 void MitaClient::handleIncomingMessages()
 {
-    ProtocolPacket packet;
+    BasicProtocolPacket packet;
 
     if (transport->receivePacket(packet, 10))
     {
@@ -408,7 +408,8 @@ void MitaClient::handleIncomingMessages()
                 String response;
                 if (message_dispatcher.processMessage(message, response))
                 {
-                    sendEncryptedMessage(packet.source_addr, response);
+                    // TODO: Test sending to router
+                    sendEncryptedMessage(ROUTER_ADDRESS, response);
 
                     // Special handling for restart command
                     DynamicJsonDocument doc(256);
@@ -437,7 +438,7 @@ bool MitaClient::sendEncryptedMessage(uint16_t dest_addr, const String &message)
     static uint16_t sequence_counter = 0;
     sequence_counter++;
 
-    ProtocolPacket packet;
+    BasicProtocolPacket packet;
     packet.version_flags = (PROTOCOL_VERSION << 4) | FLAG_ENCRYPTED;
     packet.msg_type = MSG_DATA;
     packet.source_addr = assigned_address;

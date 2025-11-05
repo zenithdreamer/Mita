@@ -53,10 +53,10 @@ void WiFiTransport::disconnect()
 
 bool WiFiTransport::isConnected() const
 {
-    return connected && WiFi.status() == WL_CONNECTED && const_cast<WiFiClient &>(client).connected();
+    return WiFi.status() == WL_CONNECTED && client.connected();
 }
 
-bool WiFiTransport::sendPacket(const ProtocolPacket &packet)
+bool WiFiTransport::sendPacket(const BasicProtocolPacket &packet)
 {
     if (!isConnected())
     {
@@ -68,10 +68,10 @@ bool WiFiTransport::sendPacket(const ProtocolPacket &packet)
     PacketUtils::serializePacket(packet, buffer, length);
 
     size_t sent = client.write(buffer, length);
-    return sent == length;
+    return sent;
 }
 
-bool WiFiTransport::receivePacket(ProtocolPacket &packet, unsigned long timeout_ms)
+bool WiFiTransport::receivePacket(BasicProtocolPacket &packet, unsigned long timeout_ms)
 {
     if (!isConnected())
     {

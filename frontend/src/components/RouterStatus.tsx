@@ -26,14 +26,7 @@ export function RouterStatus() {
   useEffect(() => {
     const fetchStatus = async () => {
       try {
-        // Fully type-safe API call using generated SDK!
-        const startTime = performance.now();
-        console.log('Fetching status...');
-
         const response = await getStatus();
-
-        const endTime = performance.now();
-        console.log(`Status fetch took ${(endTime - startTime).toFixed(2)}ms`);
 
         if (response.data) {
           setStatus(response.data);

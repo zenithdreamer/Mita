@@ -61,6 +61,9 @@ namespace mita
             
             // Packet monitoring
             std::shared_ptr<services::PacketMonitorService> get_packet_monitor() const { return packet_monitor_; }
+            
+            // Device management
+            std::shared_ptr<services::DeviceManagementService> get_device_manager() const { return device_management_; }
 
         private:
             // Setup methods
@@ -81,7 +84,7 @@ namespace mita
             // Core services
             std::unique_ptr<services::RoutingService> routing_service_;
             std::unique_ptr<services::StatisticsService> statistics_service_;
-            std::unique_ptr<services::DeviceManagementService> device_management_;
+            std::shared_ptr<services::DeviceManagementService> device_management_;
             std::shared_ptr<services::PacketMonitorService> packet_monitor_;
 
             // Transport layers

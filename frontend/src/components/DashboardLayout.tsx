@@ -10,11 +10,13 @@ import {
   Menu,
   X,
   Wifi,
+  User,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ModeToggle } from "@/components/ModeToggle"
 import { Separator } from "@/components/ui/separator"
 import { cn } from "@/lib/utils"
+import { useAuth } from "@/contexts/AuthContext"
 
 const navigation = [
   { name: "Dashboard", href: "/", icon: LayoutDashboard },
@@ -27,8 +29,10 @@ const navigation = [
 export function DashboardLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const navigate = useNavigate()
+  const { logout, user } = useAuth()
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    await logout()
     navigate("/login")
   }
 
@@ -97,6 +101,12 @@ export function DashboardLayout() {
 
           {/* Footer */}
           <div className="p-4 space-y-2">
+            {user && (
+              <div className="px-3 py-2 text-sm text-muted-foreground flex items-center space-x-2">
+                <User className="h-4 w-4" />
+                <span>{user.username}</span>
+              </div>
+            )}
             <Button
               variant="ghost"
               className="w-full justify-start"

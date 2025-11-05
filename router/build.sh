@@ -35,7 +35,10 @@ cmake -DCMAKE_BUILD_TYPE="$BUILD_TYPE" ..
 
 # Build
 echo -e "${YELLOW}Building...${NC}"
-make -j$(nproc)
+if ! make -j$(nproc); then
+    echo -e "${RED}Build failed!${NC}"
+    exit 1
+fi
 
 echo -e "${GREEN}Build complete!${NC}"
 echo -e "Executable: ${YELLOW}$BUILD_DIR/mita_router${NC}"

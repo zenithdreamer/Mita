@@ -72,4 +72,136 @@ class PacketListDto : public oatpp::DTO {
   DTO_FIELD(Int32, total);
 };
 
+// Authentication DTOs
+class LoginRequestDto : public oatpp::DTO {
+  DTO_INIT(LoginRequestDto, DTO)
+
+  DTO_FIELD_INFO(username) {
+    info->required = true;
+    info->description = "Username for authentication";
+  }
+  DTO_FIELD(String, username);
+
+  DTO_FIELD_INFO(password) {
+    info->required = true;
+    info->description = "Password for authentication";
+  }
+  DTO_FIELD(String, password);
+};
+
+class LoginResponseDto : public oatpp::DTO {
+  DTO_INIT(LoginResponseDto, DTO)
+
+  DTO_FIELD_INFO(success) {
+    info->required = true;
+  }
+  DTO_FIELD(Boolean, success);
+
+  DTO_FIELD_INFO(message) {
+    info->required = true;
+  }
+  DTO_FIELD(String, message);
+
+  DTO_FIELD(String, username);
+  DTO_FIELD(Int64, userId);
+};
+
+class UserInfoDto : public oatpp::DTO {
+  DTO_INIT(UserInfoDto, DTO)
+
+  DTO_FIELD(Int64, id);
+  DTO_FIELD(String, username);
+  DTO_FIELD(Int64, createdAt);
+};
+
+class DashboardStatsDto : public oatpp::DTO {
+  DTO_INIT(DashboardStatsDto, DTO)
+
+  DTO_FIELD_INFO(status) {
+    info->required = true;
+  }
+  DTO_FIELD(String, status);
+
+  DTO_FIELD_INFO(uptime) {
+    info->required = true;
+  }
+  DTO_FIELD(Int64, uptime);
+
+  DTO_FIELD(Int32, connectedDevices);
+  DTO_FIELD(Int64, totalPackets);
+  DTO_FIELD(Int64, packetsToday);
+  DTO_FIELD(Boolean, wifiEnabled);
+  DTO_FIELD(Boolean, bleEnabled);
+  DTO_FIELD(String, wifiStatus);
+  DTO_FIELD(String, bleStatus);
+  
+  // System resources
+  DTO_FIELD(Float32, cpuUsage);  // Percentage 0-100
+  DTO_FIELD(Int64, memoryUsed);  // Bytes
+  DTO_FIELD(Int64, memoryTotal); // Bytes
+  DTO_FIELD(Int64, storageUsed); // Bytes
+  DTO_FIELD(Int64, storageTotal); // Bytes
+  
+  // Network throughput
+  DTO_FIELD(Int64, packetsPerSecond);
+  DTO_FIELD(Float64, uploadSpeed);   // MB/s
+  DTO_FIELD(Float64, downloadSpeed); // MB/s
+};
+
+class SystemResourcesDto : public oatpp::DTO {
+  DTO_INIT(SystemResourcesDto, DTO)
+
+  DTO_FIELD_INFO(cpuUsage) {
+    info->description = "CPU usage percentage (0-100)";
+  }
+  DTO_FIELD(Float32, cpuUsage);
+
+  DTO_FIELD_INFO(memoryUsed) {
+    info->description = "Used memory in bytes";
+  }
+  DTO_FIELD(Int64, memoryUsed);
+
+  DTO_FIELD_INFO(memoryTotal) {
+    info->description = "Total memory in bytes";
+  }
+  DTO_FIELD(Int64, memoryTotal);
+
+  DTO_FIELD_INFO(storageUsed) {
+    info->description = "Used storage in bytes";
+  }
+  DTO_FIELD(Int64, storageUsed);
+
+  DTO_FIELD_INFO(storageTotal) {
+    info->description = "Total storage in bytes";
+  }
+  DTO_FIELD(Int64, storageTotal);
+};
+
+class NetworkStatsDto : public oatpp::DTO {
+  DTO_INIT(NetworkStatsDto, DTO)
+
+  DTO_FIELD(Int64, totalPackets);
+  DTO_FIELD(Int64, packetsPerSecond);
+  DTO_FIELD(Float64, uploadSpeed);   // MB/s
+  DTO_FIELD(Float64, downloadSpeed); // MB/s
+  DTO_FIELD(Int64, bytesUploaded);
+  DTO_FIELD(Int64, bytesDownloaded);
+};
+
+class ProtocolInfoDto : public oatpp::DTO {
+  DTO_INIT(ProtocolInfoDto, DTO)
+
+  DTO_FIELD(String, name);
+  DTO_FIELD(String, status);  // "active", "inactive", "error"
+  DTO_FIELD(Int32, connectedDevices);
+  DTO_FIELD(String, description);
+  DTO_FIELD(Boolean, enabled);
+};
+
+class ProtocolListDto : public oatpp::DTO {
+  DTO_INIT(ProtocolListDto, DTO)
+
+  DTO_FIELD(Vector<Object<ProtocolInfoDto>>, protocols);
+};
+
 #include OATPP_CODEGEN_END(DTO)

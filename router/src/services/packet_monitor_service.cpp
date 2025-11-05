@@ -10,7 +10,10 @@ namespace mita
     {
 
         PacketMonitorService::PacketMonitorService(size_t max_packets)
-            : logger_(core::get_logger("PacketMonitor")), max_packets_(max_packets)
+            : logger_(core::get_logger("PacketMonitor")), 
+              max_packets_(max_packets),
+              metrics_start_time_(std::chrono::steady_clock::now()),
+              last_metrics_update_(std::chrono::steady_clock::now())
         {
             logger_->info("Packet Monitor Service initialized", 
                          core::LogContext().add("max_packets", max_packets));
@@ -45,6 +48,10 @@ namespace mita
                 captured.raw_data = packet.to_bytes();
                 captured.decoded_header = decode_header(packet);
                 captured.decoded_payload = decode_payload(packet);
+
+                // Update metrics based on direction
+                bool is_upload = (direction == "outbound" || direction == "forwarded");
+                update_metrics(captured.payload_size + 16, is_upload); // +16 for header overhead
 
                 std::lock_guard<std::mutex> lock(packets_mutex_);
                 
@@ -248,6 +255,81 @@ namespace mita
             }
 
             return oss.str();
+        }
+
+        void PacketMonitorService::update_metrics(size_t bytes, bool is_upload)
+        {
+            // Update total bytes
+            if (is_upload) {
+                total_bytes_uploaded_.fetch_add(bytes);
+            } else {
+                total_bytes_downloaded_.fetch_add(bytes);
+            }
+
+            // Add to rolling window for packets per second calculation
+            std::lock_guard<std::mutex> lock(window_mutex_);
+            packet_window_.push_back({std::chrono::steady_clock::now(), bytes, is_upload});
+            
+            // Clean old entries (older than 60 seconds)
+            clean_packet_window();
+            
+            last_metrics_update_ = std::chrono::steady_clock::now();
+        }
+
+        void PacketMonitorService::clean_packet_window()
+        {
+            auto now = std::chrono::steady_clock::now();
+            auto cutoff = now - std::chrono::seconds(60);
+            
+            while (!packet_window_.empty() && packet_window_.front().time < cutoff) {
+                packet_window_.pop_front();
+            }
+        }
+
+        PacketMonitorService::NetworkMetrics PacketMonitorService::get_network_metrics() const
+        {
+            NetworkMetrics metrics;
+            
+            // Get total bytes
+            metrics.total_bytes_uploaded = total_bytes_uploaded_.load();
+            metrics.total_bytes_downloaded = total_bytes_downloaded_.load();
+            
+            std::lock_guard<std::mutex> lock(window_mutex_);
+            
+            // Calculate packets per second and throughput from last 60 seconds
+            auto now = std::chrono::steady_clock::now();
+            auto window_start = now - std::chrono::seconds(60);
+            
+            uint64_t recent_packets = 0;
+            uint64_t recent_upload_bytes = 0;
+            uint64_t recent_download_bytes = 0;
+            
+            for (const auto& entry : packet_window_) {
+                if (entry.time >= window_start) {
+                    recent_packets++;
+                    if (entry.is_upload) {
+                        recent_upload_bytes += entry.bytes;
+                    } else {
+                        recent_download_bytes += entry.bytes;
+                    }
+                }
+            }
+            
+            // Calculate rates
+            auto window_duration = std::chrono::duration_cast<std::chrono::seconds>(
+                now - (packet_window_.empty() ? metrics_start_time_ : packet_window_.front().time)
+            ).count();
+            
+            if (window_duration > 0) {
+                metrics.packets_per_second = recent_packets / window_duration;
+                // Convert bytes/sec to MB/s
+                metrics.upload_speed_mbps = (recent_upload_bytes / static_cast<double>(window_duration)) / (1024.0 * 1024.0);
+                metrics.download_speed_mbps = (recent_download_bytes / static_cast<double>(window_duration)) / (1024.0 * 1024.0);
+            }
+            
+            metrics.last_update = last_metrics_update_;
+            
+            return metrics;
         }
 
     } // namespace services

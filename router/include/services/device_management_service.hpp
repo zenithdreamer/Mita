@@ -104,6 +104,7 @@ namespace mita
             const ManagedDevice *get_device_info(const std::string &device_id) const;
             std::vector<std::string> get_connected_device_ids() const;
             size_t get_device_count() const;
+            size_t get_device_count_by_transport(core::TransportType transport) const;
 
             // Message handlers
             void register_message_handler(const std::string &handler_name, MessageHandler handler);

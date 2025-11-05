@@ -48,7 +48,7 @@ namespace mita
                 // Initialize core services
                 routing_service_ = std::make_unique<services::RoutingService>(config_->routing);
                 statistics_service_ = std::make_unique<services::StatisticsService>();
-                device_management_ = std::make_unique<services::DeviceManagementService>(
+                device_management_ = std::make_shared<services::DeviceManagementService>(
                     *routing_service_, *statistics_service_);
                 packet_monitor_ = std::make_shared<services::PacketMonitorService>(1000); // Keep last 1000 packets
 

@@ -14,7 +14,7 @@ echo ""
 
 # Check and install system dependencies
 echo -e "${YELLOW}Checking system dependencies...${NC}"
-REQUIRED_PACKAGES="build-essential cmake pkg-config libdbus-1-dev libnm-dev nlohmann-json3-dev libssl-dev"
+REQUIRED_PACKAGES="build-essential cmake pkg-config libdbus-1-dev libnm-dev nlohmann-json3-dev libssl-dev libsqlite3-dev"
 MISSING_PACKAGES=""
 
 for pkg in $REQUIRED_PACKAGES; do
@@ -32,6 +32,12 @@ if [ -n "$MISSING_PACKAGES" ]; then
 else
     echo -e "${GREEN}All dependencies are installed${NC}"
 fi
+echo ""
+
+# Create data directory for SQLite database
+echo -e "${YELLOW}Setting up data directory...${NC}"
+mkdir -p router/data
+echo -e "${GREEN}Data directory ready${NC}"
 echo ""
 
 # Build backend
@@ -58,6 +64,11 @@ echo -e "${YELLOW}  - Swagger UI: http://localhost:8080/swagger/ui${NC}"
 echo -e "${YELLOW}  - OpenAPI JSON: http://localhost:8080/api-docs/oas-3.0.0.json${NC}"
 echo ""
 echo -e "${YELLOW}Frontend will start on: http://localhost:5173${NC}"
+echo ""
+echo -e "${GREEN}=== Default Login Credentials ===${NC}"
+echo -e "${YELLOW}  Username: admin${NC}"
+echo -e "${YELLOW}  Password: admin${NC}"
+echo -e "${RED} IMPORTANT: Change these credentials after first login!${NC}"
 echo ""
 echo -e "${GREEN}Press Ctrl+C to stop all services${NC}"
 echo ""

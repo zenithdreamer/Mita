@@ -30,6 +30,94 @@ export type PacketListDto = {
     total?: number;
 };
 
+export type DashboardStatsDto = {
+    status: string;
+    uptime: number;
+    connectedDevices?: number;
+    totalPackets?: number;
+    packetsToday?: number;
+    wifiEnabled?: boolean;
+    bleEnabled?: boolean;
+    wifiStatus?: string;
+    bleStatus?: string;
+    cpuUsage?: number;
+    memoryUsed?: number;
+    memoryTotal?: number;
+    storageUsed?: number;
+    storageTotal?: number;
+    packetsPerSecond?: number;
+    uploadSpeed?: number;
+    downloadSpeed?: number;
+};
+
+export type LoginResponseDto = {
+    success: boolean;
+    message: string;
+    username?: string;
+    userId?: number;
+};
+
+export type ProtocolInfoDto = {
+    name?: string;
+    status?: string;
+    connectedDevices?: number;
+    description?: string;
+    enabled?: boolean;
+};
+
+export type SystemResourcesDto = {
+    /**
+     * CPU usage percentage (0-100)
+     */
+    cpuUsage?: number;
+    /**
+     * Used memory in bytes
+     */
+    memoryUsed?: number;
+    /**
+     * Total memory in bytes
+     */
+    memoryTotal?: number;
+    /**
+     * Used storage in bytes
+     */
+    storageUsed?: number;
+    /**
+     * Total storage in bytes
+     */
+    storageTotal?: number;
+};
+
+export type NetworkStatsDto = {
+    totalPackets?: number;
+    packetsPerSecond?: number;
+    uploadSpeed?: number;
+    downloadSpeed?: number;
+    bytesUploaded?: number;
+    bytesDownloaded?: number;
+};
+
+export type ProtocolListDto = {
+    protocols?: Array<ProtocolInfoDto>;
+};
+
+export type LoginRequestDto = {
+    /**
+     * Username for authentication
+     */
+    username: string;
+    /**
+     * Password for authentication
+     */
+    password: string;
+};
+
+export type UserInfoDto = {
+    id?: number;
+    username?: string;
+    createdAt?: number;
+};
+
 export type GetStatusData = {
     body?: never;
     path?: never;
@@ -45,6 +133,54 @@ export type GetStatusResponses = {
 };
 
 export type GetStatusResponse = GetStatusResponses[keyof GetStatusResponses];
+
+export type GetDeviceStatusData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/status/devices';
+};
+
+export type GetDeviceStatusResponses = {
+    /**
+     * OK
+     */
+    200: DashboardStatsDto;
+};
+
+export type GetDeviceStatusResponse = GetDeviceStatusResponses[keyof GetDeviceStatusResponses];
+
+export type GetSystemStatusData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/status/system';
+};
+
+export type GetSystemStatusResponses = {
+    /**
+     * OK
+     */
+    200: SystemResourcesDto;
+};
+
+export type GetSystemStatusResponse = GetSystemStatusResponses[keyof GetSystemStatusResponses];
+
+export type GetNetworkStatusData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/status/network';
+};
+
+export type GetNetworkStatusResponses = {
+    /**
+     * OK
+     */
+    200: NetworkStatsDto;
+};
+
+export type GetNetworkStatusResponse = GetNetworkStatusResponses[keyof GetNetworkStatusResponses];
 
 export type ClearPacketsData = {
     body?: never;
@@ -87,6 +223,22 @@ export type GetPacketsResponses = {
 
 export type GetPacketsResponse = GetPacketsResponses[keyof GetPacketsResponses];
 
+export type GetProtocolsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/protocols';
+};
+
+export type GetProtocolsResponses = {
+    /**
+     * OK
+     */
+    200: ProtocolListDto;
+};
+
+export type GetProtocolsResponse = GetProtocolsResponses[keyof GetProtocolsResponses];
+
 export type OptionsData = {
     body?: never;
     path?: never;
@@ -102,3 +254,69 @@ export type OptionsResponses = {
 };
 
 export type OptionsResponse = OptionsResponses[keyof OptionsResponses];
+
+export type LoginData = {
+    body: LoginRequestDto;
+    path?: never;
+    query?: never;
+    url: '/api/auth/login';
+};
+
+export type LoginErrors = {
+    /**
+     * Unauthorized
+     */
+    401: LoginResponseDto;
+};
+
+export type LoginError = LoginErrors[keyof LoginErrors];
+
+export type LoginResponses = {
+    /**
+     * OK
+     */
+    200: LoginResponseDto;
+};
+
+export type LoginResponse = LoginResponses[keyof LoginResponses];
+
+export type LogoutData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/auth/logout';
+};
+
+export type LogoutResponses = {
+    /**
+     * OK
+     */
+    200: StatusDto;
+};
+
+export type LogoutResponse = LogoutResponses[keyof LogoutResponses];
+
+export type GetCurrentUserData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/auth/me';
+};
+
+export type GetCurrentUserErrors = {
+    /**
+     * Unauthorized
+     */
+    401: StatusDto;
+};
+
+export type GetCurrentUserError = GetCurrentUserErrors[keyof GetCurrentUserErrors];
+
+export type GetCurrentUserResponses = {
+    /**
+     * OK
+     */
+    200: UserInfoDto;
+};
+
+export type GetCurrentUserResponse = GetCurrentUserResponses[keyof GetCurrentUserResponses];

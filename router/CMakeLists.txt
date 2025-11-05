@@ -8,7 +8,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Build configuration
 set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type")
 option(BUILD_TESTS "Build tests" ON)
-# Always enable WiFi and BLE; SimpleBluez mandatory
+
+# Always enable WiFi and BLE;
 set(ENABLE_WIFI ON)
 set(ENABLE_BLE ON)
 set(USE_SIMPLEBLUEZ ON)
@@ -33,6 +34,9 @@ find_package(nlohmann_json REQUIRED)
 # OpenSSL for cryptography
 find_package(OpenSSL REQUIRED)
 
+# SQLite3 for database
+find_package(SQLite3 REQUIRED)
+
 # DBus for NetworkManager integration (WiFi)
 pkg_check_modules(DBUS REQUIRED dbus-1)
 pkg_check_modules(NM REQUIRED libnm)
@@ -44,6 +48,9 @@ pkg_check_modules(NM REQUIRED libnm)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -Wpedantic")
 set(CMAKE_CXX_FLAGS_DEBUG "-g -O0 -DDEBUG")
 set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG")
+
+# Suppress warnings from system headers and dependencies
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-unused-parameter -Wno-sign-compare -Wno-catch-value -Wno-missing-field-initializers -Wno-sequence-point")
 
 # Source files
 file(GLOB_RECURSE CORE_SOURCES "src/core/*.cpp")
@@ -69,7 +76,25 @@ FetchContent_Declare(simpleble
 )
 FetchContent_MakeAvailable(simpleble)
 
-# Disable oatpp tests to speed up build and reduce warnings
+# Suppress warnings from SimpleBLE and its dependencies
+if(TARGET simpleble)
+    target_compile_options(simpleble PRIVATE -w)
+endif()
+if(TARGET simplebluez)
+    target_compile_options(simplebluez PRIVATE -w)
+endif()
+if(TARGET simpledbus)
+    target_compile_options(simpledbus PRIVATE -w)
+endif()
+
+# Fetch sqlite_orm (header-only ORM library)
+FetchContent_Declare(sqlite_orm
+    GIT_REPOSITORY https://github.com/fnc12/sqlite_orm.git
+    GIT_TAG v1.9
+)
+FetchContent_MakeAvailable(sqlite_orm)
+
+# Disable oatpp tests to speed up build
 option(OATPP_BUILD_TESTS "Build oatpp tests" OFF)
 
 # Force oatpp modules to use CUSTOM location (not INSTALLED)
@@ -83,8 +108,13 @@ FetchContent_Declare(
     GIT_TAG 1.3.0
 )
 
-# Make oatpp available first - this builds oatpp
+# Make oatpp available first
 FetchContent_MakeAvailable(oatpp)
+
+# Suppress warnings from oatpp
+if(TARGET oatpp)
+    target_compile_options(oatpp PRIVATE -w)
+endif()
 
 # Set paths for CUSTOM mode - tell oatpp-swagger where to find oatpp
 set(OATPP_DIR_SRC "${oatpp_SOURCE_DIR}/src" CACHE STRING "" FORCE)
@@ -99,6 +129,11 @@ FetchContent_Declare(
 
 # Make oatpp-swagger available after oatpp is ready
 FetchContent_MakeAvailable(oatpp-swagger)
+
+# Suppress warnings from oatpp-swagger
+if(TARGET oatpp-swagger)
+    target_compile_options(oatpp-swagger PRIVATE -w)
+endif()
 
 # Define swagger resource path
 add_definitions(-DOATPP_SWAGGER_RES_PATH="${oatpp-swagger_SOURCE_DIR}/res")
@@ -121,6 +156,11 @@ if(NOT TARGET fmt::fmt)
         GIT_TAG 11.0.2
     )
     FetchContent_MakeAvailable(fmt)
+
+    # Suppress warnings from fmt
+    if(TARGET fmt)
+        target_compile_options(fmt PRIVATE -w)
+    endif()
 endif()
 
 # Link libraries
@@ -129,7 +169,9 @@ target_link_libraries(mita_router
     nlohmann_json::nlohmann_json
     OpenSSL::SSL
     OpenSSL::Crypto
+    SQLite::SQLite3
     fmt::fmt
+    sqlite_orm::sqlite_orm
     oatpp
     oatpp-swagger
 )

@@ -2,7 +2,7 @@
 
 import type { Client, Options as Options2, TDataShape } from './client';
 import { client } from './client.gen';
-import type { ClearPacketsData, ClearPacketsResponses, GetPacketsData, GetPacketsResponses, GetStatusData, GetStatusResponses, OptionsData, OptionsResponses } from './types.gen';
+import type { ClearPacketsData, ClearPacketsResponses, GetCurrentUserData, GetCurrentUserErrors, GetCurrentUserResponses, GetDeviceStatusData, GetDeviceStatusResponses, GetNetworkStatusData, GetNetworkStatusResponses, GetPacketsData, GetPacketsResponses, GetProtocolsData, GetProtocolsResponses, GetStatusData, GetStatusResponses, GetSystemStatusData, GetSystemStatusResponses, LoginData, LoginErrors, LoginResponses, LogoutData, LogoutResponses, OptionsData, OptionsResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean> = Options2<TData, ThrowOnError> & {
     /**
@@ -31,6 +31,42 @@ export const getStatus = <ThrowOnError extends boolean = false>(options?: Option
 };
 
 /**
+ * Get connected devices status
+ *
+ * Returns information about connected devices across all transports
+ */
+export const getDeviceStatus = <ThrowOnError extends boolean = false>(options?: Options<GetDeviceStatusData, ThrowOnError>) => {
+    return (options?.client ?? client).get<GetDeviceStatusResponses, unknown, ThrowOnError>({
+        url: '/api/status/devices',
+        ...options
+    });
+};
+
+/**
+ * Get system resource status
+ *
+ * Returns CPU, memory, and storage usage
+ */
+export const getSystemStatus = <ThrowOnError extends boolean = false>(options?: Options<GetSystemStatusData, ThrowOnError>) => {
+    return (options?.client ?? client).get<GetSystemStatusResponses, unknown, ThrowOnError>({
+        url: '/api/status/system',
+        ...options
+    });
+};
+
+/**
+ * Get network statistics
+ *
+ * Returns packet counts and throughput information
+ */
+export const getNetworkStatus = <ThrowOnError extends boolean = false>(options?: Options<GetNetworkStatusData, ThrowOnError>) => {
+    return (options?.client ?? client).get<GetNetworkStatusResponses, unknown, ThrowOnError>({
+        url: '/api/status/network',
+        ...options
+    });
+};
+
+/**
  * Clear all captured packets
  */
 export const clearPackets = <ThrowOnError extends boolean = false>(options?: Options<ClearPacketsData, ThrowOnError>) => {
@@ -52,9 +88,61 @@ export const getPackets = <ThrowOnError extends boolean = false>(options: Option
     });
 };
 
+/**
+ * Get protocol status
+ *
+ * Returns status of supported protocols (WiFi, BLE, Zigbee, etc.)
+ */
+export const getProtocols = <ThrowOnError extends boolean = false>(options?: Options<GetProtocolsData, ThrowOnError>) => {
+    return (options?.client ?? client).get<GetProtocolsResponses, unknown, ThrowOnError>({
+        url: '/api/protocols',
+        ...options
+    });
+};
+
 export const options = <ThrowOnError extends boolean = false>(options?: Options<OptionsData, ThrowOnError>) => {
     return (options?.client ?? client).options<OptionsResponses, unknown, ThrowOnError>({
         url: '/*',
+        ...options
+    });
+};
+
+/**
+ * Login to the router
+ *
+ * Authenticate user with username and password
+ */
+export const login = <ThrowOnError extends boolean = false>(options: Options<LoginData, ThrowOnError>) => {
+    return (options.client ?? client).post<LoginResponses, LoginErrors, ThrowOnError>({
+        url: '/api/auth/login',
+        ...options,
+        headers: {
+            'Content-Type': 'application/json',
+            ...options.headers
+        }
+    });
+};
+
+/**
+ * Logout from the router
+ *
+ * Invalidate current session
+ */
+export const logout = <ThrowOnError extends boolean = false>(options?: Options<LogoutData, ThrowOnError>) => {
+    return (options?.client ?? client).post<LogoutResponses, unknown, ThrowOnError>({
+        url: '/api/auth/logout',
+        ...options
+    });
+};
+
+/**
+ * Get current user info
+ *
+ * Returns information about the currently authenticated user
+ */
+export const getCurrentUser = <ThrowOnError extends boolean = false>(options?: Options<GetCurrentUserData, ThrowOnError>) => {
+    return (options?.client ?? client).get<GetCurrentUserResponses, GetCurrentUserErrors, ThrowOnError>({
+        url: '/api/auth/me',
         ...options
     });
 };

@@ -8,7 +8,11 @@
 #include "oatpp-swagger/Controller.hpp"
 #include "oatpp-swagger/Resources.hpp"
 #include "api/controller.hpp"
+#include "api/auth_controller.hpp"
+#include "api/auth_interceptor.hpp"
 #include "services/packet_monitor_service.hpp"
+#include "services/device_management_service.hpp"
+#include "services/auth_service.hpp"
 #include <memory>
 #include <thread>
 #include <chrono>
@@ -22,11 +26,22 @@ private:
   std::vector<std::thread> m_workerThreads;
   std::atomic<bool> m_running;
   std::shared_ptr<mita::services::PacketMonitorService> m_packetMonitor;
+  std::shared_ptr<mita::services::DeviceManagementService> m_deviceManager;
+  std::shared_ptr<mita::AuthService> m_authService;
   static constexpr size_t NUM_WORKER_THREADS = 4;
 
 public:
-  ApiServer(std::shared_ptr<mita::services::PacketMonitorService> packetMonitor = nullptr) 
-    : m_running(false), m_packetMonitor(packetMonitor) {}
+  ApiServer(std::shared_ptr<mita::services::PacketMonitorService> packetMonitor = nullptr,
+            std::shared_ptr<mita::services::DeviceManagementService> deviceManager = nullptr)
+    : m_running(false), m_packetMonitor(packetMonitor), m_deviceManager(deviceManager) {
+    // Initialize authentication service
+    try {
+      m_authService = std::make_shared<mita::AuthService>("data/router.db");
+    } catch (const std::exception& e) {
+      printf("[ERROR] Failed to initialize authentication service: %s\n", e.what());
+      throw;
+    }
+  }
 
   ~ApiServer() {
     stop();
@@ -43,15 +58,22 @@ public:
     // Create Router
     auto router = oatpp::web::server::HttpRouter::createShared();
 
-    // Create API Controller with packet monitor
-    auto apiController = std::make_shared<RouterApiController>(objectMapper, m_packetMonitor);
+    // Create authentication interceptor
+    auto authInterceptor = std::make_shared<AuthInterceptor>(m_authService);
+
+    // Create API Controller with packet monitor and device manager
+    auto apiController = std::make_shared<RouterApiController>(objectMapper, m_packetMonitor, m_deviceManager);
     router->addController(apiController);
+
+    // Create Auth Controller
+    auto authController = std::make_shared<AuthController>(objectMapper, m_authService);
+    router->addController(authController);
 
     // Create Swagger documentation info
     auto docInfo = oatpp::swagger::DocumentInfo::createShared();
     docInfo->header = oatpp::swagger::DocumentHeader::createShared();
     docInfo->header->title = "Mita Router API";
-    docInfo->header->description = "BLE/WiFi Router REST API";
+    docInfo->header->description = "BLE/WiFi Router REST API with Authentication";
     docInfo->header->version = "1.0.0";
 
     // Create Swagger UI controller with embedded resources
@@ -61,8 +83,13 @@ public:
     auto swaggerResources = oatpp::swagger::Resources::streamResources(nullptr);
     #endif
 
+    // Combine endpoints from both controllers for Swagger
+    auto apiEndpoints = apiController->getEndpoints();
+    auto authEndpoints = authController->getEndpoints();
+    apiEndpoints.append(authEndpoints);
+
     auto swaggerController = oatpp::swagger::Controller::createShared(
-      apiController->getEndpoints(),
+      apiEndpoints,
       docInfo,
       swaggerResources
     );
@@ -73,8 +100,9 @@ public:
       {host, port, oatpp::network::Address::IP_4}
     );
 
-    // Create connection handler
+    // Create connection handler with authentication interceptor
     m_connectionHandler = oatpp::web::server::HttpConnectionHandler::createShared(router);
+    m_connectionHandler->addRequestInterceptor(authInterceptor);
 
     printf("[API] HTTP Server starting on http://%s:%d\n", host.c_str(), port);
     printf("[API] API endpoints: http://%s:%d/api/*\n", host.c_str(), port);

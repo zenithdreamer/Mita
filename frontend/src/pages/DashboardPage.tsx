@@ -9,8 +9,8 @@ import {
 } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { getStatus } from "@/api"
-import type { StatusDto } from "@/api"
+import { getStatus, getDeviceStatus, getSystemStatus, getNetworkStatus, getProtocols } from "@/api"
+import type { StatusDto, DashboardStatsDto, SystemResourcesDto, NetworkStatsDto, ProtocolListDto } from "@/api"
 
 interface StatCardProps {
   title: string
@@ -88,6 +88,10 @@ function ProtocolCard({ name, status, devices, description }: ProtocolCardProps)
 
 export function DashboardPage() {
   const [status, setStatus] = useState<StatusDto | null>(null)
+  const [deviceStatus, setDeviceStatus] = useState<DashboardStatsDto | null>(null)
+  const [systemStatus, setSystemStatus] = useState<SystemResourcesDto | null>(null)
+  const [networkStatus, setNetworkStatus] = useState<NetworkStatsDto | null>(null)
+  const [protocols, setProtocols] = useState<ProtocolListDto['protocols']>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -104,8 +108,54 @@ export function DashboardPage() {
       }
     }
 
+    const fetchDeviceStatus = async () => {
+      try {
+        const { data } = await getDeviceStatus()
+        setDeviceStatus(data || null)
+      } catch (error) {
+        console.error("Failed to fetch device status:", error)
+      }
+    }
+
+    const fetchSystemStatus = async () => {
+      try {
+        const { data } = await getSystemStatus()
+        setSystemStatus(data || null)
+      } catch (error) {
+        console.error("Failed to fetch system status:", error)
+      }
+    }
+
+    const fetchNetworkStatus = async () => {
+      try {
+        const { data } = await getNetworkStatus()
+        setNetworkStatus(data || null)
+      } catch (error) {
+        console.error("Failed to fetch network status:", error)
+      }
+    }
+
+    const fetchProtocols = async () => {
+      try {
+        const { data } = await getProtocols()
+        setProtocols(data?.protocols || [])
+      } catch (error) {
+        console.error("Failed to fetch protocols:", error)
+      }
+    }
+
     fetchStatus()
-    const interval = setInterval(fetchStatus, 5000)
+    fetchDeviceStatus()
+    fetchSystemStatus()
+    fetchNetworkStatus()
+    fetchProtocols()
+    const interval = setInterval(() => {
+      fetchStatus()
+      fetchDeviceStatus()
+      fetchSystemStatus()
+      fetchNetworkStatus()
+      fetchProtocols()
+    }, 5000)
     return () => clearInterval(interval)
   }, [])
 
@@ -140,7 +190,7 @@ export function DashboardPage() {
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <StatCard
           title="Router Status"
-          value={status?.running ? "Online" : "Offline"}
+          value={status?.status === "running" ? "Online" : "Offline"}
           description={status?.message ? status.message : "No status message"}
           icon={<Activity className="h-4 w-4 text-muted-foreground" />}
         />
@@ -152,17 +202,17 @@ export function DashboardPage() {
         />
         <StatCard
           title="Active Connections"
-          value="24"
+          value={deviceStatus?.connectedDevices !== undefined ? deviceStatus.connectedDevices.toString() : "..."}
           description="Connected devices"
           icon={<Network className="h-4 w-4 text-muted-foreground" />}
-          trend="+12% from last hour"
         />
         <StatCard
           title="Data Throughput"
-          value="45.2 MB/s"
+          value={networkStatus?.uploadSpeed !== undefined && networkStatus?.downloadSpeed !== undefined
+            ? `${(networkStatus.uploadSpeed + networkStatus.downloadSpeed).toFixed(1)} MB/s`
+            : "..."}
           description="Current transfer rate"
           icon={<TrendingUp className="h-4 w-4 text-muted-foreground" />}
-          trend="+8% from average"
         />
       </div>
 
@@ -179,28 +229,55 @@ export function DashboardPage() {
             <div>
               <div className="flex items-center justify-between mb-2">
                 <span className="text-sm font-medium">CPU Usage</span>
-                <span className="text-sm text-muted-foreground">34%</span>
+                <span className="text-sm text-muted-foreground">
+                  {systemStatus?.cpuUsage !== undefined ? `${systemStatus.cpuUsage.toFixed(1)}%` : "..."}
+                </span>
               </div>
               <div className="w-full bg-secondary rounded-full h-2">
-                <div className="bg-primary h-2 rounded-full" style={{ width: "34%" }} />
+                <div 
+                  className="bg-primary h-2 rounded-full" 
+                  style={{ width: systemStatus?.cpuUsage !== undefined ? `${systemStatus.cpuUsage.toFixed(0)}%` : '0%' }} 
+                />
               </div>
             </div>
             <div>
               <div className="flex items-center justify-between mb-2">
                 <span className="text-sm font-medium">Memory Usage</span>
-                <span className="text-sm text-muted-foreground">2.4 GB / 4 GB</span>
+                <span className="text-sm text-muted-foreground">
+                  {systemStatus?.memoryUsed !== undefined && systemStatus?.memoryTotal !== undefined
+                    ? `${(systemStatus.memoryUsed / 1073741824).toFixed(1)} GB / ${(systemStatus.memoryTotal / 1073741824).toFixed(1)} GB`
+                    : "..."}
+                </span>
               </div>
               <div className="w-full bg-secondary rounded-full h-2">
-                <div className="bg-primary h-2 rounded-full" style={{ width: "60%" }} />
+                <div 
+                  className="bg-primary h-2 rounded-full" 
+                  style={{ 
+                    width: systemStatus?.memoryUsed !== undefined && systemStatus?.memoryTotal !== undefined
+                      ? `${((systemStatus.memoryUsed / systemStatus.memoryTotal) * 100).toFixed(0)}%`
+                      : "0%"
+                  }} 
+                />
               </div>
             </div>
             <div>
               <div className="flex items-center justify-between mb-2">
                 <span className="text-sm font-medium">Storage</span>
-                <span className="text-sm text-muted-foreground">12.8 GB / 32 GB</span>
+                <span className="text-sm text-muted-foreground">
+                  {systemStatus?.storageUsed !== undefined && systemStatus?.storageTotal !== undefined
+                    ? `${(systemStatus.storageUsed / 1073741824).toFixed(1)} GB / ${(systemStatus.storageTotal / 1073741824).toFixed(1)} GB`
+                    : "..."}
+                </span>
               </div>
               <div className="w-full bg-secondary rounded-full h-2">
-                <div className="bg-primary h-2 rounded-full" style={{ width: "40%" }} />
+                <div 
+                  className="bg-primary h-2 rounded-full" 
+                  style={{ 
+                    width: systemStatus?.storageUsed !== undefined && systemStatus?.storageTotal !== undefined
+                      ? `${((systemStatus.storageUsed / systemStatus.storageTotal) * 100).toFixed(0)}%`
+                      : "0%"
+                  }} 
+                />
               </div>
             </div>
           </CardContent>
@@ -216,19 +293,27 @@ export function DashboardPage() {
           <CardContent className="space-y-3">
             <div className="flex justify-between items-center">
               <span className="text-sm text-muted-foreground">Total Packets</span>
-              <span className="text-lg font-semibold">1,234,567</span>
+              <span className="text-lg font-semibold">
+                {networkStatus?.totalPackets !== undefined ? networkStatus.totalPackets.toLocaleString() : "..."}
+              </span>
             </div>
             <div className="flex justify-between items-center">
               <span className="text-sm text-muted-foreground">Packets/sec</span>
-              <span className="text-lg font-semibold">8,945</span>
+              <span className="text-lg font-semibold">
+                {networkStatus?.packetsPerSecond !== undefined ? networkStatus.packetsPerSecond.toLocaleString() : "..."}
+              </span>
             </div>
             <div className="flex justify-between items-center">
               <span className="text-sm text-muted-foreground">Upload</span>
-              <span className="text-lg font-semibold">12.4 MB/s</span>
+              <span className="text-lg font-semibold">
+                {networkStatus?.uploadSpeed !== undefined ? `${networkStatus.uploadSpeed.toFixed(1)} MB/s` : "..."}
+              </span>
             </div>
             <div className="flex justify-between items-center">
               <span className="text-sm text-muted-foreground">Download</span>
-              <span className="text-lg font-semibold">32.8 MB/s</span>
+              <span className="text-lg font-semibold">
+                {networkStatus?.downloadSpeed !== undefined ? `${networkStatus.downloadSpeed.toFixed(1)} MB/s` : "..."}
+              </span>
             </div>
           </CardContent>
         </Card>
@@ -238,24 +323,38 @@ export function DashboardPage() {
       <div>
         <h2 className="text-2xl font-bold tracking-tight mb-4">Protocol Status</h2>
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          <ProtocolCard
-            name="WiFi (802.11ax)"
-            status="active"
-            devices={12}
-            description="2.4GHz & 5GHz dual-band wireless"
-          />
-          <ProtocolCard
-            name="Bluetooth LE"
-            status="active"
-            devices={8}
-            description="Low energy Bluetooth 5.3"
-          />
-          <ProtocolCard
-            name="Zigbee 3.0"
-            status="active"
-            devices={3}
-            description="Low-power mesh networking"
-          />
+          {protocols && protocols.length > 0 ? (
+            protocols.map((protocol, index) => (
+              <ProtocolCard
+                key={index}
+                name={protocol.name || ''}
+                status={protocol.status as "active" | "inactive" | "error" || 'inactive'}
+                devices={protocol.connectedDevices || 0}
+                description={protocol.description || ''}
+              />
+            ))
+          ) : (
+            <>
+              <ProtocolCard
+                name="WiFi (802.11ax)"
+                status="active"
+                devices={12}
+                description="2.4GHz & 5GHz dual-band wireless"
+              />
+              <ProtocolCard
+                name="Bluetooth LE"
+                status="active"
+                devices={8}
+                description="Low energy Bluetooth 5.3"
+              />
+              <ProtocolCard
+                name="Zigbee 3.0"
+                status="active"
+                devices={3}
+                description="Low-power mesh networking"
+              />
+            </>
+          )}
         </div>
       </div>
     </div>

@@ -1,21 +1,43 @@
-import { useState } from "react"
-import { useNavigate } from "react-router-dom"
-import { Wifi, Lock } from "lucide-react"
+import { useState, useEffect } from "react"
+import { useNavigate, useLocation } from "react-router-dom"
+import { Wifi, Lock, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { ModeToggle } from "@/components/ModeToggle"
+import { useAuth } from "@/contexts/AuthContext"
 
 export function LoginPage() {
   const navigate = useNavigate()
+  const location = useLocation()
+  const { login, isAuthenticated } = useAuth()
   const [username, setUsername] = useState("")
   const [password, setPassword] = useState("")
+  const [error, setError] = useState("")
+  const [loading, setLoading] = useState(false)
 
-  const handleLogin = (e: React.FormEvent) => {
+  // Redirect if already authenticated
+  useEffect(() => {
+    if (isAuthenticated) {
+      const from = (location.state as any)?.from?.pathname || "/"
+      navigate(from, { replace: true })
+    }
+  }, [isAuthenticated, navigate, location])
+
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
-    // Dummy login - just navigate to dashboard
-    navigate("/")
+    setError("")
+    setLoading(true)
+
+    try {
+      await login(username, password)
+      // Navigation will be handled by useEffect
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Login failed. Please check your credentials.")
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
@@ -38,6 +60,11 @@ export function LoginPage() {
         </CardHeader>
         <CardContent>
           <form onSubmit={handleLogin} className="space-y-4">
+            {error && (
+              <div className="bg-destructive/10 text-destructive px-4 py-3 rounded-md text-sm">
+                {error}
+              </div>
+            )}
             <div className="space-y-2">
               <Label htmlFor="username">Username</Label>
               <Input
@@ -46,6 +73,7 @@ export function LoginPage() {
                 placeholder="Enter your username"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
+                disabled={loading}
                 required
               />
             </div>
@@ -57,12 +85,22 @@ export function LoginPage() {
                 placeholder="Enter your password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
+                disabled={loading}
                 required
               />
             </div>
-            <Button type="submit" className="w-full" size="lg">
-              <Lock className="mr-2 h-4 w-4" />
-              Sign In
+            <Button type="submit" className="w-full" size="lg" disabled={loading}>
+              {loading ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Signing In...
+                </>
+              ) : (
+                <>
+                  <Lock className="mr-2 h-4 w-4" />
+                  Sign In
+                </>
+              )}
             </Button>
           </form>
 

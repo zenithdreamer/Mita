@@ -402,6 +402,19 @@ namespace mita
             return managed_devices_.size();
         }
 
+        size_t DeviceManagementService::get_device_count_by_transport(core::TransportType transport) const
+        {
+            std::shared_lock<std::shared_mutex> lock(devices_mutex_);
+            size_t count = 0;
+            for (const auto& [id, device] : managed_devices_) {
+                if (device.transport_type == transport && 
+                    (device.state == DeviceState::ACTIVE || device.state == DeviceState::AUTHENTICATED)) {
+                    count++;
+                }
+            }
+            return count;
+        }
+
         void DeviceManagementService::register_message_handler(const std::string &handler_name,
                                                                MessageHandler handler)
         {

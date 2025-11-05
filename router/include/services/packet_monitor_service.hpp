@@ -70,6 +70,18 @@ namespace mita
             void disable() { enabled_ = false; }
             bool is_enabled() const { return enabled_; }
 
+            // Network metrics
+            struct NetworkMetrics {
+                uint64_t total_bytes_uploaded = 0;
+                uint64_t total_bytes_downloaded = 0;
+                uint64_t packets_per_second = 0;
+                double upload_speed_mbps = 0.0;    // MB/s
+                double download_speed_mbps = 0.0;  // MB/s
+                std::chrono::steady_clock::time_point last_update;
+            };
+
+            NetworkMetrics get_network_metrics() const;
+
         private:
             std::string generate_packet_id();
             std::string message_type_to_string(MessageType type) const;
@@ -82,6 +94,25 @@ namespace mita
             size_t max_packets_;
             std::atomic<bool> enabled_{true};
             std::atomic<uint64_t> packet_counter_{0};
+
+            // Network metrics tracking
+            mutable std::mutex metrics_mutex_;
+            std::atomic<uint64_t> total_bytes_uploaded_{0};
+            std::atomic<uint64_t> total_bytes_downloaded_{0};
+            std::chrono::steady_clock::time_point metrics_start_time_;
+            std::chrono::steady_clock::time_point last_metrics_update_;
+            
+            // Rolling window for packets per second calculation (last 60 seconds)
+            struct PacketTimestamp {
+                std::chrono::steady_clock::time_point time;
+                size_t bytes;
+                bool is_upload;
+            };
+            mutable std::mutex window_mutex_;
+            std::deque<PacketTimestamp> packet_window_;
+            
+            void update_metrics(size_t bytes, bool is_upload);
+            void clean_packet_window();
         };
 
     } // namespace services

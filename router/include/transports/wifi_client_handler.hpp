@@ -53,6 +53,10 @@ public:
     const std::string& get_device_id() const { return device_id_; }
     uint16_t get_assigned_address() const { return assigned_address_; }
 
+    bool check_heartbeat_timeout();
+    bool check_for_disconnected() const;
+    std::chrono::steady_clock::time_point get_disconnect_time() const;
+
     // Packet transmission
     bool send_packet(const protocol::ProtocolPacket& packet);
 
@@ -68,7 +72,6 @@ private:
     void handle_data_packet(const protocol::ProtocolPacket& packet);
     void handle_heartbeat_packet(const protocol::ProtocolPacket& packet);
     void update_heartbeat();
-    bool check_heartbeat_timeout();
     void cleanup();
 
     // Network
@@ -94,7 +97,8 @@ private:
 
     //track heart beat
     std::chrono::steady_clock::time_point last_heartbeat_;
-    std::mutex heartbeat_mutex_;
+    std::chrono::steady_clock::time_point disconnect_time_;
+    mutable std::mutex heartbeat_mutex_;
 
     // Threading
     std::unique_ptr<std::thread> handler_thread_;

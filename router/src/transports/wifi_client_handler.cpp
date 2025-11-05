@@ -26,7 +26,7 @@ namespace mita
                                              services::DeviceManagementService &device_management,
                                              services::StatisticsService &statistics_service,
                                              std::shared_ptr<services::PacketMonitorService> packet_monitor)
-            : client_socket_(client_socket), client_addr_(client_addr), config_(config), routing_service_(routing_service), device_management_(device_management), statistics_service_(statistics_service), packet_monitor_(packet_monitor), assigned_address_(0), authenticated_(false), running_(false), last_heartbeat_(std::chrono::steady_clock::now()), logger_(core::get_logger("WiFiClientHandler"))
+        : client_socket_(client_socket), client_addr_(client_addr), config_(config), routing_service_(routing_service), device_management_(device_management), statistics_service_(statistics_service), packet_monitor_(packet_monitor), assigned_address_(0), authenticated_(false), running_(false), last_heartbeat_(std::chrono::steady_clock::now()), disconnect_time_(std::chrono::steady_clock::time_point::max()), logger_(core::get_logger("WiFiClientHandler"))
         {
 
             // Convert client address to string
@@ -548,6 +548,16 @@ namespace mita
         {
             std::lock_guard<std::mutex> lock(heartbeat_mutex_);
             last_heartbeat_ = std::chrono::steady_clock::now();
+            
+            if (!running_)
+            {
+                logger_->info("Client reconnected via heartbeat",
+                             core::LogContext()
+                                 .add("device_id", device_id_)
+                                 .add("address", client_address_str_));
+                running_ = true;
+                disconnect_time_ = std::chrono::steady_clock::time_point::max();
+            }
         }
 
         bool WiFiClientHandler::check_heartbeat_timeout()
@@ -561,17 +571,39 @@ namespace mita
             auto now = std::chrono::steady_clock::now();
             auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_heartbeat_).count();
 
-            if (elapsed > MITA_HEARTBEAT_TIMEOUT_MS)
+            if (elapsed > MITA_HEARTBEAT_TIMEOUT_MS && running_)
             {
                 logger_->warning("Heartbeat timeout - client appears disconnected",
                                 core::LogContext()
                                     .add("device_id", device_id_)
                                     .add("elapsed_ms", elapsed)
                                     .add("timeout_ms", MITA_HEARTBEAT_TIMEOUT_MS));
+                running_ = false;
+                disconnect_time_ = now;
                 return true;
             }
 
             return false;
+        }
+
+        std::chrono::steady_clock::time_point WiFiClientHandler::get_disconnect_time() const
+        {
+            std::lock_guard<std::mutex> lock(heartbeat_mutex_);
+            return disconnect_time_;
+        }
+
+        bool WiFiClientHandler::check_for_disconnected() const
+        {
+            if (running_)
+            {
+                return false;
+            }
+
+            std::lock_guard<std::mutex> lock(heartbeat_mutex_);
+            auto now = std::chrono::steady_clock::now();
+            auto disconnected_duration = std::chrono::duration_cast<std::chrono::seconds>(now - disconnect_time_).count();
+
+            return disconnected_duration >= 30;
         }
 
     } // namespace transports

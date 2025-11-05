@@ -189,8 +189,19 @@ namespace mita
             int flags = fcntl(server_socket_, F_GETFL, 0);
             fcntl(server_socket_, F_SETFL, flags | O_NONBLOCK);
 
+            auto last_cleanup = std::chrono::steady_clock::now();
+            const auto cleanup_interval = std::chrono::seconds(5);
+
             while (running_)
             {
+
+                auto now = std::chrono::steady_clock::now();
+                if (now - last_cleanup >= cleanup_interval)
+                {
+                    cleanup_disconnected_clients();
+                    last_cleanup = now;
+                }
+
                 sockaddr_in client_addr;
                 socklen_t client_addr_len = sizeof(client_addr);
 
@@ -210,6 +221,7 @@ namespace mita
                     {
                         logger_->error("Failed to accept client connection",
                                        core::LogContext().add("error", strerror(errno)));
+                        std::this_thread::sleep_for(std::chrono::milliseconds(100));
                     }
                     continue;
                 }
@@ -301,6 +313,18 @@ namespace mita
         void WiFiTransport::cleanup_disconnected_clients()
         {
 
+            {
+                std::lock_guard<std::mutex> lock(clients_mutex_);
+                for (auto& pair : client_handlers_)
+                {
+                    if (pair.second)
+                    {
+                        pair.second->check_heartbeat_timeout();
+                    }
+                }
+            }
+
+
             std::vector<std::unique_ptr<WiFiClientHandler>> handlers_to_cleanup;
 
             {
@@ -310,11 +334,11 @@ namespace mita
                 auto it = client_handlers_.begin();
                 while (it != client_handlers_.end())
                 {
-                    if (!it->second->is_running())
+                    if (it->second && it->second->check_for_disconnected())
                     {
                         std::string device_id = it->first;
 
-                        logger_->debug("Removing disconnected client",
+                        logger_->info("Removing disconnected client",
                                        core::LogContext().add("device_id", device_id));
 
                         if (!device_id.empty())
@@ -335,7 +359,7 @@ namespace mita
 
                 if (cleaned > 0)
                 {
-                    logger_->debug("Clean up disconnected client",
+                    logger_->info("Clean up disconnected client",
                                    core::LogContext().add("cleaned_count", cleaned).add("remaining", client_handlers_.size()));
                 }
             }

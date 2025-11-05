@@ -322,6 +322,8 @@ namespace mita
                             handle_device_found(device.address, device.name);
                         }
 
+                        check_heartbeat_timeouts();
+
                         // Cleanup disconnected devices
                         cleanup_disconnected_devices();
 
@@ -356,8 +358,58 @@ namespace mita
                               //core::LogContext{}.add("address", address).add("name", name));
 
                 // check if already connected
-                if (device_registry_.has_device(address))
+                auto existing_handler = device_registry_.get_device(address);
+                if (existing_handler)
                 {
+                    // reconnect device handler still in retgistry
+                    if (!existing_handler->is_connected())
+                    {
+                        logger_->info("Device found in registry but disconnected - attempting reconnect",
+                                     core::LogContext{}
+                                         .add("address", address)
+                                         .add("device_id", existing_handler->get_device_id()));
+
+                        
+                        if (backend_->connect(address))
+                        {
+                            // enable notifications
+                            if (backend_->enable_notifications(
+                                    address,
+                                    config_.ble.service_uuid,
+                                    config_.ble.characteristic_uuid,
+                                    [this](const std::string &addr, const std::vector<uint8_t> &data)
+                                    {
+                                        on_notification_received(addr, data);
+                                    }))
+                            {
+                                // reconnect handler
+                                if (existing_handler->reconnect())
+                                {
+                                    logger_->info("Device successfully reconnected",
+                                                 core::LogContext{}
+                                                     .add("address", address)
+                                                     .add("device_id", existing_handler->get_device_id()));
+                                }
+                                else
+                                {
+                                    logger_->warning("Handler reconnect failed",
+                                                    core::LogContext{}.add("address", address));
+                                }
+                            }
+                            else
+                            {
+                                logger_->warning("Failed to re-enable notifications on reconnect",
+                                                core::LogContext{}.add("address", address));
+                                backend_->disconnect(address);
+                            }
+                        }
+                        else
+                        {
+                            logger_->warning("Backend reconnect failed",
+                                            core::LogContext{}.add("address", address));
+                        }
+                    }
+
                     return;
                 }
 
@@ -394,12 +446,12 @@ namespace mita
                     return;
                 }
 
-                logger_->info("Attempting to connect to device",
+                logger_->info("Connecting to new device",
                              core::LogContext{}.add("address", address).add("name", name));
 
                 if (connect_to_device(address))
                 {
-                    logger_->info("Successfully connected to device",
+                    logger_->info("Successfully connect to new device",
                                  core::LogContext{}.add("address", address).add("name", name));
                 }
                 else
@@ -521,17 +573,61 @@ namespace mita
                 }
             }
 
-            // ========== PRIVATE METHODS: CLEANUP ==========
+            void BLETransport::check_heartbeat_timeouts()
+            {
+                auto all_devices = device_registry_.get_all_devices();
+                for (auto &handler : all_devices)
+                {
+                    if (handler)
+                    {
+                        handler->check_heartbeat_timeout();
+                    }
+                }
+            }
+           
 
             void BLETransport::cleanup_disconnected_devices()
             {
                 logger_->debug("Cleaning up disconnected devices");
 
-                int removed_count = device_registry_.remove_disconnected();
-                logger_->info("Removed disconnected devices",
-                              core::LogContext{}.add("count", removed_count));
-            }
+                  auto all_devices = device_registry_.get_all_devices();
+                int removed_count = 0;
 
+                for (auto &handler : all_devices)
+                {
+                    if (handler && handler->check_for_disconnected())
+                    {
+                        std::string device_id = handler->get_device_id();
+                        std::string address = handler->get_device_address();
+
+                        logger_->info("Removing device after grace period",
+                                     core::LogContext{}
+                                         .add("device_id", device_id)
+                                         .add("address", address));
+
+                        // disconnect backend
+                        backend_->disconnect(address);
+
+                        // remove from device registry
+                        if (device_registry_.remove_device(address))
+                        {
+                            removed_count++;
+
+
+                            if (!device_id.empty())
+                            {
+                                device_management_.remove_device(device_id);
+                            }
+                        }
+                    }
+                }
+
+                if (removed_count > 0)
+                {
+                    logger_->info("Removed disconnected devices",
+                                  core::LogContext{}.add("count", removed_count));
+                }
+            }
         } // namespace ble
     }     // namespace transports
 } // namespace mita

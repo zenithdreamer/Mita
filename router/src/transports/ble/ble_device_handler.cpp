@@ -2,6 +2,7 @@
 #include "core/config.hpp"
 #include "core/logger.hpp"
 #include "services/packet_monitor_service.hpp"
+#include "config/mita_config.h"
 
 namespace mita
 {
@@ -27,6 +28,8 @@ namespace mita
                   assigned_address_(0),
                   connected_(false),
                   authenticated_(false),
+                  last_heartbeat_(std::chrono::steady_clock::now()),
+                  disconnect_time_(std::chrono::steady_clock::time_point::max()),
                   logger_(core::get_logger("BLEDeviceHandler")),
                   packet_monitor_(packet_monitor)
             {
@@ -49,6 +52,35 @@ namespace mita
                              core::LogContext{}.add("address", device_address_));
 
                 connected_ = true;
+                                update_heartbeat();
+
+                return true;
+            }
+
+            bool BLEDeviceHandler::reconnect()
+            {
+                logger_->info("Device handler reconnecting",
+                             core::LogContext{}
+                                 .add("address", device_address_)
+                                 .add("device_id", device_id_)
+                                 .add("was_connected", connected_.load()));
+
+
+                connected_ = true;
+                update_heartbeat();
+
+                // authen again
+                authenticated_ = false;
+                session_crypto_.reset();
+
+                handshake_manager_ = std::make_unique<protocol::HandshakeManager>(
+                    config_.router_id, config_.shared_secret);
+
+                logger_->info("Device handler reconnected - waiting for handshake",
+                             core::LogContext{}
+                                 .add("address", device_address_)
+                                 .add("device_id", device_id_));
+
 
                 return true;
             }
@@ -368,6 +400,76 @@ namespace mita
                     statistics_service_.record_packet_dropped();
                 }
             }
+
+            void BLEDeviceHandler::handle_heartbeat_packet(const protocol::ProtocolPacket &packet)
+            {
+                update_heartbeat();
+
+                logger_->debug("BLE heartbeat received",
+                              core::LogContext{}.add("device_id", device_id_).add("address", device_address_));
+            }
+
+            void BLEDeviceHandler::update_heartbeat()
+            {
+                std::lock_guard<std::mutex> lock(heartbeat_mutex_);
+                last_heartbeat_ = std::chrono::steady_clock::now();
+
+                if (!connected_)
+                {
+                    logger_->info("Device reconnected via heartbeat",
+                                 core::LogContext{}.add("device_id", device_id_).add("address", device_address_));
+                    connected_ = true;
+                    disconnect_time_ = std::chrono::steady_clock::time_point::max();
+                }
+            }
+
+            void BLEDeviceHandler::check_heartbeat_timeout()
+            {
+                if (!authenticated_)
+                {
+                    return;
+                }
+
+                std::lock_guard<std::mutex> lock(heartbeat_mutex_);
+                auto now = std::chrono::steady_clock::now();
+                auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_heartbeat_).count();
+
+                // heartbeat time out 30 sec
+                if (elapsed > MITA_HEARTBEAT_TIMEOUT_MS && connected_)
+                {
+                    logger_->warning("BLE heartbeat timeout - marking device as disconnected",
+                                    core::LogContext{}
+                                        .add("device_id", device_id_)
+                                        .add("address", device_address_)
+                                        .add("elapsed_ms", elapsed)
+                                        .add("timeout_ms", MITA_HEARTBEAT_TIMEOUT_MS));
+
+                    connected_ = false;
+                    disconnect_time_ = now;
+                }
+            }
+
+            std::chrono::steady_clock::time_point BLEDeviceHandler::get_disconnect_time() const
+            {
+                std::lock_guard<std::mutex> lock(heartbeat_mutex_);
+                return disconnect_time_;
+            }
+
+            bool BLEDeviceHandler::check_for_disconnected() const
+            {
+                if (connected_)
+                {
+                    return false;
+                }
+
+                std::lock_guard<std::mutex> lock(heartbeat_mutex_);
+                auto now = std::chrono::steady_clock::now();
+                auto disconnected_duration = std::chrono::duration_cast<std::chrono::seconds>(now - disconnect_time_).count();
+
+                // delete if disconnected for more than 30 seconds
+                return disconnected_duration >= 30;
+            }
+
 
         } // namespace ble
     }     // namespace transports

@@ -11,6 +11,7 @@ import { RoutingPage } from "@/pages/RoutingPage"
 import { PacketsPage } from "@/pages/PacketsPage"
 import { ProtocolsPage } from "@/pages/ProtocolsPage"
 import { SettingsPage } from "@/pages/SettingsPage"
+import { DevicePage } from "./pages/DevicePage"
 
 function App() {
   return (
@@ -30,6 +31,7 @@ function App() {
               >
                 <Route index element={<DashboardPage />} />
                 <Route path="routing" element={<RoutingPage />} />
+                <Route path="devices" element={<DevicePage />} />
                 <Route path="packets" element={<PacketsPage />} />
                 <Route path="protocols" element={<ProtocolsPage />} />
                 <Route path="settings" element={<SettingsPage />} />

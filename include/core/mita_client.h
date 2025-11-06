@@ -41,6 +41,9 @@ private:
     uint64_t challenge_baseline_timestamp;
     unsigned long challenge_baseline_millis;
 
+    // Helper to get router-synchronized timestamp
+    uint32_t getAdjustedTimestamp() const;
+
     // Timing
     unsigned long last_heartbeat;
     unsigned long last_sensor_reading;
@@ -50,7 +53,7 @@ private:
 
     // QoS configuration
     QoSLevel qos_level;
-    static const unsigned long ACK_TIMEOUT_MS = 3000;  // Wait 3s for ACK
+    static const unsigned long ACK_TIMEOUT_MS = 5000;  // Wait 5s for ACK
     static const uint8_t MAX_RETRIES = 3;              // Retry up to 3 times
 
     // Handshake methods

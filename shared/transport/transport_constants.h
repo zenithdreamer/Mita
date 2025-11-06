@@ -1,8 +1,9 @@
 #ifndef TRANSPORT_CONSTANTS_H
 #define TRANSPORT_CONSTANTS_H
 
-// WiFi Transport Constants
+// WiFi Transport Constants (Raw IP)
 #define MITA_WIFI_PORT 8000
+#define MITA_IP_PROTOCOL 253 // Custom protocol number (253 reserved for testing/experimentation)
 
 // BLE Transport Constants
 // Standard UUIDs for Mita Protocol

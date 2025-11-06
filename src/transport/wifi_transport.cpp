@@ -3,13 +3,18 @@
 #include "../shared/config/mita_config.h"
 
 WiFiTransport::WiFiTransport()
-    : connected(false), shared_secret("Mita_password")
+    : raw_socket(-1), connected(false), shared_secret("Mita_password")
 {
 }
 
-WiFiTransport::WiFiTransport(const String& shared_secret)
-    : connected(false), shared_secret(shared_secret)
+WiFiTransport::WiFiTransport(const String &shared_secret)
+    : raw_socket(-1), connected(false), shared_secret(shared_secret)
 {
+}
+
+WiFiTransport::~WiFiTransport()
+{
+    disconnect();
 }
 
 bool WiFiTransport::connect()
@@ -28,9 +33,9 @@ bool WiFiTransport::connect()
         return false;
     }
 
-    if (!establishTCPConnection())
+    if (!createRawSocket())
     {
-        Serial.println("WiFiTransport: Failed to establish TCP connection");
+        Serial.println("WiFiTransport: Failed to create raw socket");
         WiFi.disconnect();
         return false;
     }
@@ -42,9 +47,10 @@ bool WiFiTransport::connect()
 
 void WiFiTransport::disconnect()
 {
-    if (client.connected())
+    if (raw_socket >= 0)
     {
-        client.stop();
+        close(raw_socket);
+        raw_socket = -1;
     }
     WiFi.disconnect();
     connected = false;
@@ -53,7 +59,7 @@ void WiFiTransport::disconnect()
 
 bool WiFiTransport::isConnected() const
 {
-    return WiFi.status() == WL_CONNECTED && client.connected();
+    return WiFi.status() == WL_CONNECTED && raw_socket >= 0;
 }
 
 bool WiFiTransport::sendPacket(const BasicProtocolPacket &packet)
@@ -67,54 +73,26 @@ bool WiFiTransport::sendPacket(const BasicProtocolPacket &packet)
     size_t length;
     PacketUtils::serializePacket(packet, buffer, length);
 
-    size_t sent = client.write(buffer, length);
-    return sent;
+    return sendRawPacket(buffer, length, router_ip);
 }
 
 bool WiFiTransport::receivePacket(BasicProtocolPacket &packet, unsigned long timeout_ms)
 {
-    // Don't check isConnected() here - we might be waiting for a response
-    // after just sending a packet, and client.connected() can be unreliable
-    // immediately after a send operation
-    
-    if (!client)
+    if (!isConnected())
     {
-        Serial.println("WiFiTransport: receivePacket called with no client");
+        Serial.println("WiFiTransport: receivePacket called but not connected");
         return false;
     }
 
-    unsigned long start_time = millis();
     uint8_t buffer[HEADER_SIZE + MAX_PAYLOAD_SIZE];
     size_t received = 0;
-    bool had_data = false;
+    IPAddress source_ip;
 
-    while (millis() - start_time < timeout_ms)
+    if (receiveRawPacket(buffer, received, source_ip, timeout_ms))
     {
-        int available = client.available();
-        if (available > 0 && !had_data)
+        if (received >= HEADER_SIZE)
         {
-            had_data = true;
-            Serial.printf("WiFiTransport: %d bytes available on socket\n", available);
-        }
-        
-        while (client.available() && received < sizeof(buffer))
-        {
-            buffer[received++] = client.read();
-
-            if (received >= HEADER_SIZE)
-            {
-                uint8_t payload_length = buffer[6];
-                if (received >= HEADER_SIZE + payload_length)
-                {
-                    return PacketUtils::deserializePacket(buffer, HEADER_SIZE + payload_length, packet);
-                }
-            }
-        }
-        
-        // Only delay if no data available to avoid unnecessary waiting
-        if (!client.available())
-        {
-            delay(1);
+            return PacketUtils::deserializePacket(buffer, received, packet);
         }
     }
 
@@ -214,21 +192,112 @@ bool WiFiTransport::connectToAP()
     }
 }
 
-bool WiFiTransport::establishTCPConnection()
+bool WiFiTransport::createRawSocket()
 {
-    IPAddress gateway = WiFi.gatewayIP();
-    Serial.printf("WiFiTransport: Connecting to router at %s:%d\n",
-                  gateway.toString().c_str(), MITA_WIFI_PORT);
+    router_ip = WiFi.gatewayIP();
+    Serial.printf("WiFiTransport: Creating raw socket to router at %s\n",
+                  router_ip.toString().c_str());
 
-    if (client.connect(gateway, MITA_WIFI_PORT))
+    // Create raw socket for custom IP protocol
+    raw_socket = socket(AF_INET, SOCK_RAW, MITA_IP_PROTOCOL);
+    if (raw_socket < 0)
     {
-        Serial.println("WiFiTransport: TCP connection established");
-        return true;
-    }
-    else
-    {
-        Serial.println("WiFiTransport: TCP connection failed");
+        Serial.printf("WiFiTransport: Failed to create raw socket: %d\n", errno);
         return false;
     }
+
+    // Set socket to non-blocking mode
+    int flags = fcntl(raw_socket, F_GETFL, 0);
+    if (flags >= 0)
+    {
+        fcntl(raw_socket, F_SETFL, flags | O_NONBLOCK);
+    }
+
+    // Note: ESP32 lwIP doesn't support IP_HDRINCL, kernel will build IP headers
+
+    Serial.println("WiFiTransport: Raw socket created successfully");
+    return true;
 }
 
+bool WiFiTransport::sendRawPacket(const uint8_t *data, size_t length, const IPAddress &dest_ip)
+{
+    if (raw_socket < 0)
+    {
+        return false;
+    }
+
+    // Send data directly - kernel will add IP headers
+    struct sockaddr_in dest_addr;
+    memset(&dest_addr, 0, sizeof(dest_addr));
+    dest_addr.sin_family = AF_INET;
+    dest_addr.sin_addr.s_addr = (uint32_t)dest_ip;
+
+    ssize_t sent = sendto(raw_socket, data, length, 0,
+                          (struct sockaddr *)&dest_addr, sizeof(dest_addr));
+
+    if (sent < 0)
+    {
+        Serial.printf("WiFiTransport: sendto failed: %d\n", errno);
+        return false;
+    }
+
+    return sent == (ssize_t)length;
+}
+
+bool WiFiTransport::receiveRawPacket(uint8_t *buffer, size_t &length, IPAddress &source_ip, unsigned long timeout_ms)
+{
+    if (raw_socket < 0)
+    {
+        return false;
+    }
+
+    unsigned long start_time = millis();
+    const size_t ip_header_len = 20;
+    uint8_t raw_buffer[ip_header_len + HEADER_SIZE + MAX_PAYLOAD_SIZE];
+
+    while (millis() - start_time < timeout_ms)
+    {
+        struct sockaddr_in src_addr;
+        socklen_t addr_len = sizeof(src_addr);
+
+        ssize_t received = recvfrom(raw_socket, raw_buffer, sizeof(raw_buffer), 0,
+                                    (struct sockaddr *)&src_addr, &addr_len);
+
+        if (received > 0 && received > (ssize_t)ip_header_len)
+        {
+            // Extract IP header info
+            uint8_t ihl = (raw_buffer[0] & 0x0F) * 4;
+            uint8_t protocol = raw_buffer[9];
+
+            Serial.printf("WiFiTransport: Received packet: size=%d, protocol=%d, ihl=%d\n",
+                          received, protocol, ihl);
+
+            // Verify it's our protocol
+            if (protocol == MITA_IP_PROTOCOL)
+            {
+                // Extract source IP
+                source_ip = IPAddress(raw_buffer[12], raw_buffer[13],
+                                      raw_buffer[14], raw_buffer[15]);
+
+                Serial.printf("WiFiTransport: MITA packet from %s, payload_size=%d\n",
+                              source_ip.toString().c_str(), received - ihl);
+
+                // Copy payload (skip IP header)
+                size_t payload_len = received - ihl;
+                memcpy(buffer, raw_buffer + ihl, payload_len);
+                length = payload_len;
+
+                return true;
+            }
+        }
+        else if (received < 0 && errno != EAGAIN && errno != EWOULDBLOCK)
+        {
+            Serial.printf("WiFiTransport: recvfrom error: %d\n", errno);
+            break;
+        }
+
+        delay(1);
+    }
+
+    return false;
+}

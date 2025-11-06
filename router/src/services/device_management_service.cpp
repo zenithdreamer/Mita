@@ -67,8 +67,7 @@ namespace mita
             if (it != managed_devices_.end())
             {
 
-
-                //reuse existing device entry
+                // reuse existing device entry
                 it->second.state = DeviceState::CONNECTING;
                 it->second.transport_type = transport_type;
                 it->second.connected_time = std::chrono::steady_clock::now();
@@ -81,9 +80,7 @@ namespace mita
                 it->second.state = DeviceState::HANDSHAKING;
 
                 logger_->info("device reconnect",
-                              core::LogContext().add("device_id", device_id)
-                                  .add("address", it->second.assigned_address)
-                                  .add("transport_type", static_cast<int>(transport_type)));
+                              core::LogContext().add("device_id", device_id).add("address", it->second.assigned_address).add("transport_type", static_cast<int>(transport_type)));
 
                 statistics_service_.record_connection_established();
                 notify_device_connected(device_id);
@@ -153,23 +150,24 @@ namespace mita
             routing_service_.set_session_crypto(device_id, session_crypto);
 
 #ifdef DEBUG_CRYPTO
-            // DEBUG: Log session key for decryption in UI (ONLY in debug builds)
+            // DEBUG: Log session key for decryption (ONLY in debug builds)
             std::vector<uint8_t> session_key = session_crypto->get_session_key();
             std::stringstream key_hex;
-            for (size_t i = 0; i < session_key.size(); i++) {
-                key_hex << std::hex << std::setw(2) << std::setfill('0') 
-                       << static_cast<int>(session_key[i]);
+            for (size_t i = 0; i < session_key.size(); i++)
+            {
+                key_hex << std::hex << std::setw(2) << std::setfill('0')
+                        << static_cast<int>(session_key[i]);
             }
             logger_->debug("Device authenticated - session key",
-                          core::LogContext()
-                            .add("device_id", device_id)
-                            .add("address", device->assigned_address)
-                            .add("session_key", key_hex.str()));
+                           core::LogContext()
+                               .add("device_id", device_id)
+                               .add("address", device->assigned_address)
+                               .add("session_key", key_hex.str()));
 #else
             logger_->info("Device authenticated",
                           core::LogContext()
-                            .add("device_id", device_id)
-                            .add("address", device->assigned_address));
+                              .add("device_id", device_id)
+                              .add("address", device->assigned_address));
 #endif
 
             statistics_service_.record_handshake_completed();
@@ -233,10 +231,10 @@ namespace mita
             }
 
             logger_->debug("handle_packet ENTRY",
-                          core::LogContext()
-                              .add("device_id", device_id)
-                              .add("msg_type", static_cast<int>(packet.get_message_type()))
-                              .add("seq", packet.get_sequence_number()));
+                           core::LogContext()
+                               .add("device_id", device_id)
+                               .add("msg_type", static_cast<int>(packet.get_message_type()))
+                               .add("seq", packet.get_sequence_number()));
 
             try
             {
@@ -246,24 +244,24 @@ namespace mita
                 {
                     std::shared_lock<std::shared_mutex> lock(devices_mutex_);
                     const auto *device = find_device(device_id);
-                    
+
                     if (device && device->state != DeviceState::HANDSHAKING)
                     {
                         // Validate against stored fingerprint
                         if (!validate_transport_fingerprint(device, current_fingerprint))
                         {
                             logger_->error("SECURITY: Transport fingerprint validation failed - rejecting packet",
-                                         core::LogContext()
-                                             .add("device_id", device_id)
-                                             .add("msg_type", static_cast<int>(packet.get_message_type())));
-                            
+                                           core::LogContext()
+                                               .add("device_id", device_id)
+                                               .add("msg_type", static_cast<int>(packet.get_message_type())));
+
                             send_error_packet(device_id, 0x0A, packet.get_sequence_number(), transport_type);
                             statistics_service_.record_protocol_error();
-                            return;  // Reject packet
+                            return; // Reject packet
                         }
                     }
                 }
-                
+
                 // Capture incoming packet for monitoring and get packet ID
                 std::string packet_id;
                 if (packet_monitor_)
@@ -302,31 +300,31 @@ namespace mita
                             auto now = std::chrono::steady_clock::now();
                             auto time_since_last = std::chrono::duration_cast<std::chrono::seconds>(
                                 now - device->last_heartbeat_time);
-                            
+
                             // Reset counter if window expired
                             if (time_since_last >= ManagedDevice::HEARTBEAT_WINDOW)
                             {
                                 device->heartbeat_count = 0;
                                 device->last_heartbeat_time = now;
                             }
-                            
+
                             device->heartbeat_count++;
-                            
+
                             // Check rate limit
                             if (device->heartbeat_count > ManagedDevice::MAX_HEARTBEATS_PER_WINDOW)
                             {
                                 logger_->warning("SECURITY: Heartbeat flood detected - dropping packet",
-                                               core::LogContext()
-                                                   .add("device_id", device_id)
-                                                   .add("count", device->heartbeat_count));
+                                                 core::LogContext()
+                                                     .add("device_id", device_id)
+                                                     .add("count", device->heartbeat_count));
                                 statistics_service_.record_protocol_error();
-                                return;  // Drop excessive heartbeats
+                                return; // Drop excessive heartbeats
                             }
-                            
+
                             logger_->debug("Received HEARTBEAT packet",
-                                         core::LogContext()
-                                             .add("device_id", device_id)
-                                             .add("count", device->heartbeat_count));
+                                           core::LogContext()
+                                               .add("device_id", device_id)
+                                               .add("count", device->heartbeat_count));
                         }
                     }
                     break;
@@ -382,7 +380,7 @@ namespace mita
                                                 0, // Router address
                                                 device->assigned_address,
                                                 message);
-                
+
                 // Set sequence number (simple incrementing counter)
                 static std::atomic<uint16_t> router_sequence_counter{0};
                 uint16_t seq = router_sequence_counter.fetch_add(1);
@@ -399,7 +397,7 @@ namespace mita
                     aad.push_back(packet.get_dest_addr() & 0xFF);
                     aad.push_back((seq >> 8) & 0xFF);
                     aad.push_back(seq & 0xFF);
-                    
+
                     auto encrypted_payload = device->session_crypto->encrypt_gcm(message, aad);
                     packet.set_payload(encrypted_payload);
                     packet.set_encrypted(true);
@@ -412,7 +410,7 @@ namespace mita
                     packet.set_encrypted(true);
                 }
 
-                //validate routee
+                // validate routee
                 if (!routing_service_.forward_to_device(device->assigned_address, packet))
                 {
                     logger_->warning("validation fail", core::LogContext().add("device_id", device_id).add("address", device->assigned_address));
@@ -432,7 +430,7 @@ namespace mita
                             handler_it->second(device_id, packet);
                             sent = true;
                         }
-                        catch (const std::exception& e)
+                        catch (const std::exception &e)
                         {
                             logger_->error("Transport handler failed",
                                            core::LogContext().add("device_id", device_id).add("error", e.what()));
@@ -533,9 +531,11 @@ namespace mita
         {
             std::shared_lock<std::shared_mutex> lock(devices_mutex_);
             size_t count = 0;
-            for (const auto& [id, device] : managed_devices_) {
-                if (device.transport_type == transport && 
-                    (device.state == DeviceState::ACTIVE || device.state == DeviceState::AUTHENTICATED)) {
+            for (const auto &[id, device] : managed_devices_)
+            {
+                if (device.transport_type == transport &&
+                    (device.state == DeviceState::ACTIVE || device.state == DeviceState::AUTHENTICATED))
+                {
                     count++;
                 }
             }
@@ -633,7 +633,7 @@ namespace mita
         {
             // Update statistics with current device count
             statistics_service_.update_peak_connections(get_device_count());
-            
+
             // Check for expired sessions and force re-authentication
             std::vector<std::string> expired_devices;
             {
@@ -646,16 +646,16 @@ namespace mita
                     }
                 }
             }
-            
+
             // Force re-authentication for expired sessions
             for (const std::string &device_id : expired_devices)
             {
                 logger_->info("Session expired - forcing device to re-authenticate",
-                             core::LogContext()
-                                 .add("device_id", device_id)
-                                 .add("session_lifetime_hours", 
-                                      ManagedDevice::SESSION_LIFETIME.count() / 3600));
-                
+                              core::LogContext()
+                                  .add("device_id", device_id)
+                                  .add("session_lifetime_hours",
+                                       ManagedDevice::SESSION_LIFETIME.count() / 3600));
+
                 std::unique_lock<std::shared_mutex> lock(devices_mutex_);
                 auto *device = find_device(device_id);
                 if (device)
@@ -727,20 +727,20 @@ namespace mita
                                      .add("timestamp", packet.get_timestamp()));
                 statistics_service_.record_stale_packet();
                 statistics_service_.record_protocol_error();
-                
+
                 // Flag packet as dropped in monitor
                 if (packet_monitor_ && !packet_id.empty())
                 {
                     packet_monitor_->update_packet_error(
                         packet_id,
                         "DROPPED: Stale timestamp - possible replay attack",
-                        false  // is_valid = false
+                        false // is_valid = false
                     );
                 }
-                
+
                 // Send ERROR message to client
-                send_error_packet(device_id, 0x02, packet.get_sequence_number(), transport_type);  // STALE_TIMESTAMP
-                
+                send_error_packet(device_id, 0x02, packet.get_sequence_number(), transport_type); // STALE_TIMESTAMP
+
                 return;
             }
 
@@ -753,20 +753,20 @@ namespace mita
                                      .add("device_id", device_id)
                                      .add("sequence", packet.get_sequence_number()));
                 statistics_service_.record_protocol_error();
-                
+
                 // Flag packet as dropped in monitor
                 if (packet_monitor_ && !packet_id.empty())
                 {
                     packet_monitor_->update_packet_error(
                         packet_id,
                         "DROPPED: Invalid/duplicate sequence number",
-                        false  // is_valid = false
+                        false // is_valid = false
                     );
                 }
-                
+
                 // Send ERROR message to client
-                send_error_packet(device_id, 0x01, packet.get_sequence_number(), transport_type);  // INVALID_SEQUENCE
-                
+                send_error_packet(device_id, 0x01, packet.get_sequence_number(), transport_type); // INVALID_SEQUENCE
+
                 // Don't send ACK for invalid sequence
                 return;
             }
@@ -807,7 +807,7 @@ namespace mita
                     aad.push_back(packet.get_dest_addr() & 0xFF);
                     aad.push_back((packet.get_sequence_number() >> 8) & 0xFF);
                     aad.push_back(packet.get_sequence_number() & 0xFF);
-                    
+
                     // Use AES-GCM for authenticated encryption
                     // GCM provides both confidentiality and authenticity in one operation
                     payload = device->session_crypto->decrypt_gcm(payload, aad);
@@ -817,7 +817,7 @@ namespace mita
                                    core::LogContext()
                                        .add("device_id", device_id)
                                        .add("decrypted_size", payload.size()));
-                    
+
                     // Store decrypted payload in packet monitor
                     if (packet_monitor_ && !packet_id.empty())
                     {
@@ -831,22 +831,22 @@ namespace mita
                     logger_->error("GCM authentication/decryption failed - possible tampering or header modification",
                                    core::LogContext().add("device_id", device_id).add("error", e.what()));
                     statistics_service_.record_protocol_error();
-                    
+
                     // Flag the existing packet with GCM authentication failure
                     if (packet_monitor_ && !packet_id.empty())
                     {
                         packet_monitor_->update_packet_error(
                             packet_id,
                             "GCM_AUTH_FAIL: Authentication tag verification failed - possible tampering or key mismatch",
-                            false  // is_valid = false
+                            false // is_valid = false
                         );
-                        
+
                         logger_->warning("Flagged packet with GCM authentication failure",
-                                     core::LogContext()
-                                        .add("packet_id", packet_id)
-                                        .add("device_id", device_id));
+                                         core::LogContext()
+                                             .add("packet_id", packet_id)
+                                             .add("device_id", device_id));
                     }
-                    
+
                     return; // Reject packet if GCM verification fails
                 }
             }
@@ -876,55 +876,55 @@ namespace mita
                 if (packet.get_ttl() == 0)
                 {
                     logger_->warning("Packet TTL expired - dropping",
-                                   core::LogContext()
-                                       .add("from_device", device_id)
-                                       .add("dest_addr", dest_addr));
+                                     core::LogContext()
+                                         .add("from_device", device_id)
+                                         .add("dest_addr", dest_addr));
                     statistics_service_.record_protocol_error();
                     return;
                 }
-                
+
                 // Create mutable copy of packet to decrement TTL
                 protocol::ProtocolPacket forward_packet = packet;
                 forward_packet.decrement_ttl();
-                
+
                 // Check if TTL reached zero after decrement
                 if (forward_packet.get_ttl() == 0)
                 {
                     logger_->warning("Packet TTL will expire after hop - dropping",
-                                   core::LogContext()
-                                       .add("from_device", device_id)
-                                       .add("dest_addr", dest_addr));
+                                     core::LogContext()
+                                         .add("from_device", device_id)
+                                         .add("dest_addr", dest_addr));
                     // TODO: Send ICMP-like TTL exceeded message back to source
                     statistics_service_.record_protocol_error();
                     return;
                 }
 
-                const auto* route = routing_service_.get_route(dest_addr);
+                const auto *route = routing_service_.get_route(dest_addr);
                 if (route)
                 {
                     if (send_message_to_device(route->device_id, payload))
                     {
                         logger_->debug("Packet forwarded successfully",
-                                     core::LogContext()
-                                         .add("from_device", device_id)
-                                         .add("to_device", route->device_id)
-                                         .add("ttl", forward_packet.get_ttl()));
+                                       core::LogContext()
+                                           .add("from_device", device_id)
+                                           .add("to_device", route->device_id)
+                                           .add("ttl", forward_packet.get_ttl()));
                     }
                     else
                     {
                         logger_->warning("Failed to forward packet",
-                                       core::LogContext()
-                                           .add("from_device", device_id)
-                                           .add("to_device", route->device_id));
+                                         core::LogContext()
+                                             .add("from_device", device_id)
+                                             .add("to_device", route->device_id));
                         statistics_service_.record_protocol_error();
                     }
                 }
                 else
                 {
                     logger_->warning("No route found for destination",
-                                   core::LogContext()
-                                       .add("dest_addr", dest_addr)
-                                       .add("source_device", device_id));
+                                     core::LogContext()
+                                         .add("dest_addr", dest_addr)
+                                         .add("source_device", device_id));
                     statistics_service_.record_protocol_error();
                 }
 
@@ -939,27 +939,28 @@ namespace mita
                                .add("payload_size", payload.size()));
 
             statistics_service_.record_packet_routed(payload.size());
-            
+
             // Send ACK packet back to device if QoS requires it
             uint8_t priority_flags = packet.get_priority_flags();
-            bool requires_ack = (priority_flags & 0x20) != 0;  // FLAG_QOS_RELIABLE
-            bool no_ack = (priority_flags & 0x10) != 0;        // FLAG_QOS_NO_ACK
+            bool requires_ack = (priority_flags & 0x20) != 0; // FLAG_QOS_RELIABLE
+            bool no_ack = (priority_flags & 0x10) != 0;       // FLAG_QOS_NO_ACK
 
-            if (requires_ack || (!no_ack && !requires_ack))  // Default to ACK if no QoS flag set
+            if (requires_ack || (!no_ack && !requires_ack)) // Default to ACK if no QoS flag set
             {
-                logger_->debug("Sending ACK for DATA packet",
+                logger_->info("Sending ACK for DATA packet",
                               core::LogContext()
                                   .add("device_id", device_id)
                                   .add("sequence", packet.get_sequence_number())
-                                  .add("qos", requires_ack ? "RELIABLE" : "DEFAULT"));
+                                  .add("qos", requires_ack ? "RELIABLE" : "DEFAULT")
+                                  .add("transport", transport_type == core::TransportType::WIFI ? "wifi" : "ble"));
                 send_ack_packet(device_id, packet.get_sequence_number(), transport_type);
             }
             else
             {
                 logger_->debug("Skipping ACK for NO_QOS DATA packet",
-                              core::LogContext()
-                                  .add("device_id", device_id)
-                                  .add("sequence", packet.get_sequence_number()));
+                               core::LogContext()
+                                   .add("device_id", device_id)
+                                   .add("sequence", packet.get_sequence_number()));
             }
         }
 
@@ -982,15 +983,15 @@ namespace mita
             }
 
             uint8_t control_type = packet.get_payload()[0];
-            
-            if (control_type == 0x00)  // ControlType::PING
+
+            if (control_type == 0x00) // ControlType::PING
             {
                 // Respond with PONG - echo back the timestamp
                 try
                 {
                     std::vector<uint8_t> pong_payload;
-                    pong_payload.push_back(0x01);  // ControlType::PONG
-                    
+                    pong_payload.push_back(0x01); // ControlType::PONG
+
                     // Echo back the timestamp (bytes 1-4)
                     if (packet.get_payload().size() >= 5)
                     {
@@ -1004,8 +1005,7 @@ namespace mita
                         MessageType::CONTROL,
                         ROUTER_ADDRESS,
                         device->assigned_address,
-                        pong_payload
-                    );
+                        pong_payload);
 
                     // Capture outbound PONG for monitoring
                     if (packet_monitor_)
@@ -1016,23 +1016,23 @@ namespace mita
                     if (routing_service_.forward_to_device(device->assigned_address, pong_packet))
                     {
                         logger_->debug("Sent PONG response",
-                                      core::LogContext().add("device_id", device_id));
+                                       core::LogContext().add("device_id", device_id));
                     }
                 }
                 catch (const std::exception &e)
                 {
                     logger_->warning("Failed to send PONG response",
-                                    core::LogContext()
-                                        .add("device_id", device_id)
-                                        .add("error", e.what()));
+                                     core::LogContext()
+                                         .add("device_id", device_id)
+                                         .add("error", e.what()));
                 }
             }
             // TODO: Handle other control types (TIME_SYNC, CONFIG_UPDATE, etc.)
         }
 
         void DeviceManagementService::process_disconnect_packet(const std::string &device_id,
-                                                               const protocol::ProtocolPacket &packet,
-                                                               core::TransportType transport_type)
+                                                                const protocol::ProtocolPacket &packet,
+                                                                core::TransportType transport_type)
         {
             const ManagedDevice *device = get_device_info(device_id);
             if (!device)
@@ -1041,29 +1041,43 @@ namespace mita
             }
 
             // Parse disconnect reason from payload
-            uint8_t reason_code = 0xFF;  // Unknown reason
+            uint8_t reason_code = 0xFF; // Unknown reason
             if (packet.get_payload().size() >= 1)
             {
                 reason_code = packet.get_payload()[0];
             }
 
-            const char* reason_str = "UNKNOWN";
+            const char *reason_str = "UNKNOWN";
             switch (reason_code)
             {
-                case 0x00: reason_str = "NORMAL_SHUTDOWN"; break;
-                case 0x01: reason_str = "GOING_TO_SLEEP"; break;
-                case 0x02: reason_str = "LOW_BATTERY"; break;
-                case 0x03: reason_str = "NETWORK_SWITCH"; break;
-                case 0x04: reason_str = "FIRMWARE_UPDATE"; break;
-                case 0x05: reason_str = "USER_REQUEST"; break;
-                case 0xFF: reason_str = "ERROR"; break;
+            case 0x00:
+                reason_str = "NORMAL_SHUTDOWN";
+                break;
+            case 0x01:
+                reason_str = "GOING_TO_SLEEP";
+                break;
+            case 0x02:
+                reason_str = "LOW_BATTERY";
+                break;
+            case 0x03:
+                reason_str = "NETWORK_SWITCH";
+                break;
+            case 0x04:
+                reason_str = "FIRMWARE_UPDATE";
+                break;
+            case 0x05:
+                reason_str = "USER_REQUEST";
+                break;
+            case 0xFF:
+                reason_str = "ERROR";
+                break;
             }
 
             logger_->info("Received DISCONNECT from device",
-                         core::LogContext()
-                             .add("device_id", device_id)
-                             .add("reason_code", reason_code)
-                             .add("reason", reason_str));
+                          core::LogContext()
+                              .add("device_id", device_id)
+                              .add("reason_code", reason_code)
+                              .add("reason", reason_str));
 
             // Send DISCONNECT_ACK
             try
@@ -1072,7 +1086,7 @@ namespace mita
                     MessageType::DISCONNECT_ACK,
                     ROUTER_ADDRESS,
                     device->assigned_address,
-                    {}  // No payload needed
+                    {} // No payload needed
                 );
 
                 // Capture outbound DISCONNECT_ACK for monitoring
@@ -1084,24 +1098,24 @@ namespace mita
                 if (routing_service_.forward_to_device(device->assigned_address, disconnect_ack))
                 {
                     logger_->debug("Sent DISCONNECT_ACK",
-                                  core::LogContext().add("device_id", device_id));
+                                   core::LogContext().add("device_id", device_id));
                 }
             }
             catch (const std::exception &e)
             {
                 logger_->warning("Failed to send DISCONNECT_ACK",
-                                core::LogContext()
-                                    .add("device_id", device_id)
-                                    .add("error", e.what()));
+                                 core::LogContext()
+                                     .add("device_id", device_id)
+                                     .add("error", e.what()));
             }
 
             // TODO: Keep session cached for fast reconnect (5 minutes)
             // For now, just mark as graceful disconnect and let normal cleanup handle it
             logger_->info("Device gracefully disconnected",
-                         core::LogContext()
-                             .add("device_id", device_id)
-                             .add("reason", reason_str));
-            
+                          core::LogContext()
+                              .add("device_id", device_id)
+                              .add("reason", reason_str));
+
             // Notify disconnection (will trigger cleanup)
             notify_device_disconnected(device_id);
         }
@@ -1111,13 +1125,13 @@ namespace mita
                                                                    core::TransportType transport_type)
         {
             logger_->info("Processing SESSION_REKEY_REQ",
-                         core::LogContext().add("device_id", device_id));
+                          core::LogContext().add("device_id", device_id));
 
             const ManagedDevice *device = get_device_info(device_id);
             if (!device)
             {
                 logger_->warning("Received SESSION_REKEY_REQ from unregistered device",
-                                core::LogContext().add("device_id", device_id));
+                                 core::LogContext().add("device_id", device_id));
                 return;
             }
 
@@ -1128,25 +1142,25 @@ namespace mita
                 if (payload.size() < 20)
                 {
                     logger_->warning("SESSION_REKEY_REQ payload too short",
-                                    core::LogContext()
-                                        .add("device_id", device_id)
-                                        .add("size", payload.size()));
+                                     core::LogContext()
+                                         .add("device_id", device_id)
+                                         .add("size", payload.size()));
                     return;
                 }
 
                 // Extract packets_sent counter
                 uint32_t packets_sent = (static_cast<uint32_t>(payload[0]) << 24) |
-                                       (static_cast<uint32_t>(payload[1]) << 16) |
-                                       (static_cast<uint32_t>(payload[2]) << 8) |
-                                       static_cast<uint32_t>(payload[3]);
+                                        (static_cast<uint32_t>(payload[1]) << 16) |
+                                        (static_cast<uint32_t>(payload[2]) << 8) |
+                                        static_cast<uint32_t>(payload[3]);
 
                 // Extract new client nonce (nonce3)
                 std::vector<uint8_t> new_client_nonce(payload.begin() + 4, payload.begin() + 20);
 
                 logger_->info("Session rekey request received",
-                             core::LogContext()
-                                 .add("device_id", device_id)
-                                 .add("packets_sent", std::to_string(packets_sent)));
+                              core::LogContext()
+                                  .add("device_id", device_id)
+                                  .add("packets_sent", std::to_string(packets_sent)));
 
                 // Generate new router nonce (nonce4) using secure random
                 std::vector<uint8_t> new_router_nonce(16);
@@ -1162,31 +1176,31 @@ namespace mita
                         {
                             // Rekey the session crypto
                             device_mut->session_crypto->rekey(new_client_nonce, new_router_nonce);
-                            
+
                             // Update session expiry (extend by another hour)
                             device_mut->session_expires = std::chrono::steady_clock::now() + ManagedDevice::SESSION_LIFETIME;
-                            
+
                             logger_->info("Session key rotated successfully",
-                                         core::LogContext()
-                                             .add("device_id", device_id)
-                                             .add("packets_sent", std::to_string(packets_sent)));
-                            
+                                          core::LogContext()
+                                              .add("device_id", device_id)
+                                              .add("packets_sent", std::to_string(packets_sent)));
+
                             // Record successful session rekey in statistics
                             statistics_service_.record_session_rekey();
                         }
                         catch (const std::exception &e)
                         {
                             logger_->error("Failed to rekey session",
-                                          core::LogContext()
-                                              .add("device_id", device_id)
-                                              .add("error", e.what()));
-                            return;  // Don't send ACK if rekey failed
+                                           core::LogContext()
+                                               .add("device_id", device_id)
+                                               .add("error", e.what()));
+                            return; // Don't send ACK if rekey failed
                         }
                     }
                     else
                     {
                         logger_->warning("No session crypto available for rekey",
-                                        core::LogContext().add("device_id", device_id));
+                                         core::LogContext().add("device_id", device_id));
                         return;
                     }
                 }
@@ -1196,7 +1210,7 @@ namespace mita
                     MessageType::SESSION_REKEY_ACK,
                     ROUTER_ADDRESS,
                     device->assigned_address,
-                    new_router_nonce  // Payload is the new router nonce
+                    new_router_nonce // Payload is the new router nonce
                 );
 
                 // Capture outbound SESSION_REKEY_ACK for monitoring
@@ -1209,7 +1223,7 @@ namespace mita
                 if (routing_service_.forward_to_device(device->assigned_address, rekey_ack))
                 {
                     logger_->info("Sent SESSION_REKEY_ACK",
-                                 core::LogContext().add("device_id", device_id));
+                                  core::LogContext().add("device_id", device_id));
 
                     // TODO: Update session key in device state after deriving new key
                     // This would require updating the ManagedDevice struct to store
@@ -1218,22 +1232,22 @@ namespace mita
                 else
                 {
                     logger_->warning("Failed to send SESSION_REKEY_ACK",
-                                    core::LogContext().add("device_id", device_id));
+                                     core::LogContext().add("device_id", device_id));
                 }
             }
             catch (const std::exception &e)
             {
                 logger_->error("Error processing SESSION_REKEY_REQ",
-                              core::LogContext()
-                                  .add("device_id", device_id)
-                                  .add("error", e.what()));
+                               core::LogContext()
+                                   .add("device_id", device_id)
+                                   .add("error", e.what()));
             }
         }
 
         void DeviceManagementService::send_error_packet(const std::string &device_id,
-                                                       uint8_t error_code,
-                                                       uint16_t failed_sequence,
-                                                       core::TransportType transport_type)
+                                                        uint8_t error_code,
+                                                        uint16_t failed_sequence,
+                                                        core::TransportType transport_type)
         {
             const ManagedDevice *device = get_device_info(device_id);
             if (!device)
@@ -1245,24 +1259,23 @@ namespace mita
             {
                 // Create ERROR packet with error code and failed sequence
                 std::vector<uint8_t> payload;
-                payload.push_back(error_code);                      // Error code
-                payload.push_back((failed_sequence >> 8) & 0xFF);   // Sequence high byte
-                payload.push_back(failed_sequence & 0xFF);          // Sequence low byte
+                payload.push_back(error_code);                    // Error code
+                payload.push_back((failed_sequence >> 8) & 0xFF); // Sequence high byte
+                payload.push_back(failed_sequence & 0xFF);        // Sequence low byte
 
                 protocol::ProtocolPacket error_packet(
                     MessageType::ERROR,
                     ROUTER_ADDRESS,
                     device->assigned_address,
-                    payload
-                );
+                    payload);
 
                 // Validate route
                 if (!routing_service_.forward_to_device(device->assigned_address, error_packet))
                 {
                     logger_->warning("Failed to validate route for ERROR packet",
-                                    core::LogContext()
-                                        .add("device_id", device_id)
-                                        .add("error_code", error_code));
+                                     core::LogContext()
+                                         .add("device_id", device_id)
+                                         .add("error_code", error_code));
                     return;
                 }
 
@@ -1279,7 +1292,7 @@ namespace mita
                             handler_it->second(device_id, error_packet);
                             sent = true;
                         }
-                        catch (const std::exception& e)
+                        catch (const std::exception &e)
                         {
                             logger_->error("Transport handler failed for ERROR",
                                            core::LogContext()
@@ -1296,42 +1309,62 @@ namespace mita
 
                 if (sent)
                 {
-                    const char* error_str = "UNKNOWN";
+                    const char *error_str = "UNKNOWN";
                     switch (error_code)
                     {
-                        case 0x01: error_str = "INVALID_SEQUENCE"; break;
-                        case 0x02: error_str = "STALE_TIMESTAMP"; break;
-                        case 0x03: error_str = "DECRYPTION_FAILED"; break;
-                        case 0x04: error_str = "INVALID_DESTINATION"; break;
-                        case 0x05: error_str = "TTL_EXPIRED"; break;
-                        case 0x06: error_str = "RATE_LIMIT_EXCEEDED"; break;
-                        case 0x07: error_str = "SESSION_EXPIRED"; break;
-                        case 0x08: error_str = "MALFORMED_PACKET"; break;
-                        case 0x09: error_str = "UNSUPPORTED_VERSION"; break;
-                        case 0x0A: error_str = "AUTHENTICATION_FAILED"; break;
+                    case 0x01:
+                        error_str = "INVALID_SEQUENCE";
+                        break;
+                    case 0x02:
+                        error_str = "STALE_TIMESTAMP";
+                        break;
+                    case 0x03:
+                        error_str = "DECRYPTION_FAILED";
+                        break;
+                    case 0x04:
+                        error_str = "INVALID_DESTINATION";
+                        break;
+                    case 0x05:
+                        error_str = "TTL_EXPIRED";
+                        break;
+                    case 0x06:
+                        error_str = "RATE_LIMIT_EXCEEDED";
+                        break;
+                    case 0x07:
+                        error_str = "SESSION_EXPIRED";
+                        break;
+                    case 0x08:
+                        error_str = "MALFORMED_PACKET";
+                        break;
+                    case 0x09:
+                        error_str = "UNSUPPORTED_VERSION";
+                        break;
+                    case 0x0A:
+                        error_str = "AUTHENTICATION_FAILED";
+                        break;
                     }
 
                     logger_->debug("Sent ERROR packet",
-                                  core::LogContext()
-                                      .add("device_id", device_id)
-                                      .add("error_code", static_cast<int>(error_code))
-                                      .add("error", error_str)
-                                      .add("failed_sequence", failed_sequence));
+                                   core::LogContext()
+                                       .add("device_id", device_id)
+                                       .add("error_code", static_cast<int>(error_code))
+                                       .add("error", error_str)
+                                       .add("failed_sequence", failed_sequence));
                 }
                 else
                 {
                     logger_->warning("Failed to send ERROR packet via transport",
-                                    core::LogContext()
-                                        .add("device_id", device_id)
-                                        .add("error_code", error_code));
+                                     core::LogContext()
+                                         .add("device_id", device_id)
+                                         .add("error_code", error_code));
                 }
             }
             catch (const std::exception &e)
             {
                 logger_->warning("Failed to send ERROR packet",
-                                core::LogContext()
-                                    .add("device_id", device_id)
-                                    .add("error", e.what()));
+                                 core::LogContext()
+                                     .add("device_id", device_id)
+                                     .add("error", e.what()));
             }
         }
 
@@ -1354,35 +1387,45 @@ namespace mita
 
                 protocol::ProtocolPacket ack_packet(
                     MessageType::ACK,
-                    ROUTER_ADDRESS,              // source is router
-                    device->assigned_address,    // destination is the device
-                    payload
-                );
+                    ROUTER_ADDRESS,           // source is router
+                    device->assigned_address, // destination is the device
+                    payload);
 
                 // Validate route
                 if (!routing_service_.forward_to_device(device->assigned_address, ack_packet))
                 {
                     logger_->warning("Failed to validate route for ACK packet",
-                                    core::LogContext()
-                                        .add("device_id", device_id)
-                                        .add("sequence", sequence_number));
+                                     core::LogContext()
+                                         .add("device_id", device_id)
+                                         .add("sequence", sequence_number));
                     return;
                 }
 
                 // Actually send via transport handler
                 std::string handler_name = (transport_type == core::TransportType::WIFI) ? "wifi" : "ble";
                 bool sent = false;
+
+                logger_->debug("Attempting to send ACK via transport",
+                               core::LogContext()
+                                   .add("device_id", device_id)
+                                   .add("handler_name", handler_name)
+                                   .add("sequence", sequence_number));
+
                 {
                     std::lock_guard<std::mutex> lock(handlers_mutex_);
                     auto handler_it = message_handlers_.find(handler_name);
                     if (handler_it != message_handlers_.end())
                     {
+                        logger_->debug("Found transport handler, calling it",
+                                       core::LogContext().add("handler_name", handler_name));
                         try
                         {
                             handler_it->second(device_id, ack_packet);
                             sent = true;
+                            logger_->debug("Transport handler executed successfully",
+                                           core::LogContext().add("handler_name", handler_name));
                         }
-                        catch (const std::exception& e)
+                        catch (const std::exception &e)
                         {
                             logger_->error("Transport handler failed for ACK",
                                            core::LogContext()
@@ -1399,26 +1442,28 @@ namespace mita
 
                 if (sent)
                 {
-                    logger_->debug("Sent ACK packet",
+                    logger_->info("ACK packet sent successfully",
                                   core::LogContext()
                                       .add("device_id", device_id)
-                                      .add("sequence", sequence_number));
+                                      .add("sequence", sequence_number)
+                                      .add("transport", handler_name)
+                                      .add("dest_addr", device->assigned_address));
                 }
                 else
                 {
                     logger_->warning("Failed to send ACK packet via transport",
-                                    core::LogContext()
-                                        .add("device_id", device_id)
-                                        .add("sequence", sequence_number));
+                                     core::LogContext()
+                                         .add("device_id", device_id)
+                                         .add("sequence", sequence_number));
                 }
             }
             catch (const std::exception &e)
             {
                 logger_->warning("Failed to send ACK packet",
-                                core::LogContext()
-                                    .add("device_id", device_id)
-                                    .add("sequence", sequence_number)
-                                    .add("error", e.what()));
+                                 core::LogContext()
+                                     .add("device_id", device_id)
+                                     .add("sequence", sequence_number)
+                                     .add("error", e.what()));
             }
         }
 
@@ -1464,13 +1509,13 @@ namespace mita
                 if (seq > 100)
                 {
                     logger_->warning("SECURITY: Suspicious initial sequence number - rejecting",
-                                   core::LogContext()
-                                       .add("device_id", device->device_id)
-                                       .add("sequence", seq));
+                                     core::LogContext()
+                                         .add("device_id", device->device_id)
+                                         .add("sequence", seq));
                     statistics_service_.record_protocol_error();
                     return false;
                 }
-                
+
                 device->last_valid_sequence = seq;
                 device->expected_next_sequence = (seq + 1) % 65536;
                 device->sequence_initialized = true;
@@ -1524,15 +1569,15 @@ namespace mita
                 if (seq_diff > MAX_ACCEPTABLE_GAP)
                 {
                     logger_->warning("SECURITY: Sequence gap too large - possible attack",
-                                   core::LogContext()
-                                       .add("device_id", device->device_id)
-                                       .add("expected", device->expected_next_sequence)
-                                       .add("received", seq)
-                                       .add("gap_size", seq_diff));
+                                     core::LogContext()
+                                         .add("device_id", device->device_id)
+                                         .add("expected", device->expected_next_sequence)
+                                         .add("received", seq)
+                                         .add("gap_size", seq_diff));
                     statistics_service_.record_protocol_error();
-                    return false;  // REJECT large gaps
+                    return false; // REJECT large gaps
                 }
-                
+
                 // Valid new sequence
                 if (seq_diff > 1)
                 {
@@ -1631,11 +1676,11 @@ namespace mita
         }
 
         void DeviceManagementService::set_transport_fingerprint(
-            const std::string &device_id, 
+            const std::string &device_id,
             const std::string &fingerprint)
         {
             std::unique_lock<std::shared_mutex> lock(devices_mutex_);
-            
+
             auto *device = find_device(device_id);
             if (!device)
             {
@@ -1643,15 +1688,15 @@ namespace mita
             }
 
             device->transport_fingerprint = fingerprint;
-            
+
             logger_->debug("Transport fingerprint set",
-                          core::LogContext()
-                              .add("device_id", device_id)
-                              .add("fingerprint", fingerprint));
+                           core::LogContext()
+                               .add("device_id", device_id)
+                               .add("fingerprint", fingerprint));
         }
 
         std::string DeviceManagementService::generate_transport_fingerprint(
-            const std::string &device_id, 
+            const std::string &device_id,
             core::TransportType transport_type) const
         {
             // For now, return device_id as fingerprint
@@ -1661,7 +1706,7 @@ namespace mita
         }
 
         bool DeviceManagementService::validate_transport_fingerprint(
-            const ManagedDevice *device, 
+            const ManagedDevice *device,
             const std::string &current_fingerprint) const
         {
             if (!device)
@@ -1679,10 +1724,10 @@ namespace mita
             if (device->transport_fingerprint != current_fingerprint)
             {
                 logger_->warning("Transport fingerprint mismatch - possible session hijacking attempt",
-                               core::LogContext()
-                                   .add("device_id", device->device_id)
-                                   .add("expected", device->transport_fingerprint)
-                                   .add("received", current_fingerprint));
+                                 core::LogContext()
+                                     .add("device_id", device->device_id)
+                                     .add("expected", device->transport_fingerprint)
+                                     .add("received", current_fingerprint));
                 return false;
             }
 

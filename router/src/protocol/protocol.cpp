@@ -1089,11 +1089,14 @@ namespace mita
             record_nonce(nonce1);
             
             auto nonce2 = generate_nonce();
-            
-            // Get current timestamp (Unix time in milliseconds)
-            auto now = std::chrono::system_clock::now();
+
+            // Get current timestamp using same clock as validation (steady_clock since program start)
+            // This matches the validation in DeviceManagementService::validate_packet_timestamp
+            static auto start_time = std::chrono::steady_clock::now();
+            auto now = std::chrono::steady_clock::now();
             uint64_t timestamp_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                now.time_since_epoch()).count();
+                                        now - start_time)
+                                        .count();
 
             // Store / update handshake state with nonce1 and nonce2
             {

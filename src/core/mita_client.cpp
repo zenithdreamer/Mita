@@ -20,6 +20,25 @@ MitaClient::MitaClient(const NetworkConfig &config)
     memset(nonce2, 0, NONCE_SIZE);
 }
 
+// Get timestamp adjusted to router's time base
+// Returns local millis() if no baseline established (pre-handshake)
+uint32_t MitaClient::getAdjustedTimestamp() const
+{
+    if (challenge_baseline_timestamp == 0)
+    {
+        // No baseline yet, use local time
+        return (uint32_t)millis();
+    }
+
+    // Calculate elapsed time since baseline was established
+    unsigned long elapsed = millis() - challenge_baseline_millis;
+
+    // Add elapsed time to router's baseline to get synchronized timestamp
+    // Note: This truncates to 32-bit, which is fine for the protocol
+    uint64_t adjusted = challenge_baseline_timestamp + elapsed;
+    return (uint32_t)adjusted;
+}
+
 MitaClient::~MitaClient()
 {
     disconnect();
@@ -160,8 +179,8 @@ bool MitaClient::connectToNetworkSmart(ProtocolSelector* selector, const String&
             }
             // BLE signal strength would need to be added to BLETransport
 
-            Serial.printf("MitaClient: ✓ Successfully connected via %s in %d ms\n",
-                         protocol_name, connect_time_ms);
+            Serial.printf("MitaClient: Successfully connected via %s in %d ms\n",
+                          protocol_name, connect_time_ms);
 
             // Report success to selector for learning
             selector->reportConnectionAttempt(protocol, true, connect_time_ms, signal_strength);
@@ -171,7 +190,7 @@ bool MitaClient::connectToNetworkSmart(ProtocolSelector* selector, const String&
         else
         {
             Serial.printf("MitaClient: Failed to connect via %s (took %d ms)\n",
-                         protocol_name, connect_time_ms);
+                          protocol_name, connect_time_ms);
 
             // Report failure to selector for learning
             selector->reportConnectionAttempt(protocol, false, connect_time_ms, -100);
@@ -202,9 +221,9 @@ void MitaClient::disconnect(DisconnectReason reason)
     // If we have an active session, send graceful disconnect
     if (handshake_completed && assigned_address != UNASSIGNED_ADDRESS)
     {
-        Serial.printf("MitaClient: Sending graceful disconnect (reason: 0x%02X)\n", 
-                     static_cast<uint8_t>(reason));
-        
+        Serial.printf("MitaClient: Sending graceful disconnect (reason: 0x%02X)\n",
+                      static_cast<uint8_t>(reason));
+
         if (sendDisconnect(reason))
         {
             // Wait briefly for DISCONNECT_ACK (best effort)
@@ -282,18 +301,18 @@ bool MitaClient::sendHeartbeat()
     packet.source_addr = assigned_address;
     packet.dest_addr = ROUTER_ADDRESS;
     packet.checksum = 0;
-    packet.sequence_number = 0; 
+    packet.sequence_number = 0;
     packet.ttl = DEFAULT_TTL;
     packet.priority_flags = PRIORITY_LOW;
     packet.fragment_id = 0;
-    packet.timestamp = (uint32_t)millis();
+    packet.timestamp = getAdjustedTimestamp();
     packet.payload_length = 0;
 
     Serial.println("MitaClient: Sending heartbeat");
     return transport->sendPacket(packet);
 }
 
-//send data to router
+// send data to router
 bool MitaClient::sendSensorData()
 {
     String sensor_data = generateSensorData();
@@ -306,18 +325,18 @@ bool MitaClient::sendPing()
 {
     BasicProtocolPacket packet;
     packet.version_flags = (PROTOCOL_VERSION << 4);
-    packet.msg_type = MSG_CONTROL;  // Use CONTROL message for PING
+    packet.msg_type = MSG_CONTROL; // Use CONTROL message for PING
     packet.source_addr = assigned_address;
     packet.dest_addr = ROUTER_ADDRESS;
     packet.checksum = 0;
     packet.sequence_number = 0;
     packet.ttl = DEFAULT_TTL;
-    packet.priority_flags = PRIORITY_HIGH;  // PING is high priority
+    packet.priority_flags = PRIORITY_HIGH; // PING is high priority
     packet.fragment_id = 0;
-    packet.timestamp = (uint32_t)millis();
+    packet.timestamp = getAdjustedTimestamp();
 
     // Payload: PING control type (0x00) + timestamp for RTT calculation
-    packet.payload[0] = 0x00;  // ControlType::PING
+    packet.payload[0] = 0x00; // ControlType::PING
     uint32_t ping_time = millis();
     packet.payload[1] = (ping_time >> 24) & 0xFF;
     packet.payload[2] = (ping_time >> 16) & 0xFF;
@@ -326,22 +345,21 @@ bool MitaClient::sendPing()
     packet.payload_length = 5;
 
     last_ping_sent = ping_time;
-    
+
     Serial.printf("MitaClient: Sending PING (time=%lu)\n", ping_time);
     return transport->sendPacket(packet);
 }
 
-//test send data to another esp via router
-// bool MitaClient::sendSensorData()
-// {
-//     if (network_config.device_id != "ESP32_Sensor_001")
-//     {
-//         Serial.println("MitaClient: This device doesn't send sensor data");
-//         return true;
-//     }
+// test send data to another esp via router
+//  bool MitaClient::sendSensorData()
+//  {
+//      if (network_config.device_id != "ESP32_Sensor_001")
+//      {
+//          Serial.println("MitaClient: This device doesn't send sensor data");
+//          return true;
+//      }
 
 //     String sensor_data = generateSensorData();
-
 
 //     uint16_t target_address = 2;
 
@@ -403,7 +421,7 @@ bool MitaClient::sendHello()
     packet.msg_type = MSG_HELLO;
     packet.source_addr = UNASSIGNED_ADDRESS;
     packet.dest_addr = ROUTER_ADDRESS;
-    packet.checksum = 0; // Will be computed automatically
+    packet.checksum = 0;        // Will be computed automatically
     packet.sequence_number = 0; // Handshake packets don't need sequence
     packet.ttl = DEFAULT_TTL;
     packet.priority_flags = PRIORITY_HIGH; // Handshake is high priority
@@ -480,7 +498,7 @@ bool MitaClient::receiveChallenge()
     // Validate challenge timestamp freshness (10-second window)
     // Protects against replay attacks using old CHALLENGE packets
     // Use instance variables (not static) to reset baseline per handshake attempt
-    
+
     // On first CHALLENGE of this handshake, establish baseline
     if (challenge_baseline_timestamp == 0)
     {
@@ -493,10 +511,10 @@ bool MitaClient::receiveChallenge()
         // Calculate expected timestamp based on elapsed time since first challenge
         unsigned long elapsed_millis = millis() - challenge_baseline_millis;
         uint64_t expected_timestamp = challenge_baseline_timestamp + elapsed_millis;
-        
-        // Strict 2-second window for clock drift and network delays 
+
+        // Strict 2-second window for clock drift and network delays
         const uint64_t MAX_TIMESTAMP_DRIFT_MS = 2000;
-        
+
         uint64_t timestamp_diff;
         if (timestamp_ms > expected_timestamp)
         {
@@ -506,15 +524,15 @@ bool MitaClient::receiveChallenge()
         {
             timestamp_diff = expected_timestamp - timestamp_ms;
         }
-        
+
         if (timestamp_diff > MAX_TIMESTAMP_DRIFT_MS)
         {
-            Serial.printf("MitaClient: CHALLENGE timestamp drift too large: %llu ms (expected ~%llu, got %llu)\n", 
-                         timestamp_diff, expected_timestamp, timestamp_ms);
+            Serial.printf("MitaClient: CHALLENGE timestamp drift too large: %llu ms (expected ~%llu, got %llu)\n",
+                          timestamp_diff, expected_timestamp, timestamp_ms);
             Serial.println("MitaClient: Possible replay attack detected");
             return false;
         }
-        
+
         Serial.printf("MitaClient: Timestamp validation passed (drift: %llu ms)\n", timestamp_diff);
     }
 
@@ -541,7 +559,7 @@ bool MitaClient::sendAuth()
     packet.msg_type = MSG_AUTH;
     packet.source_addr = UNASSIGNED_ADDRESS;
     packet.dest_addr = ROUTER_ADDRESS;
-    packet.checksum = 0; // Will be computed automatically
+    packet.checksum = 0;        // Will be computed automatically
     packet.sequence_number = 0; // Handshake packets don't need sequence
     packet.ttl = DEFAULT_TTL;
     packet.priority_flags = PRIORITY_HIGH; // Handshake is high priority
@@ -639,7 +657,8 @@ bool MitaClient::receiveAuthAck()
     Serial.print("MitaClient: ");
     for (int i = 0; i < SESSION_KEY_SIZE; i++)
     {
-        if (session_key_bytes[i] < 0x10) Serial.print("0");
+        if (session_key_bytes[i] < 0x10)
+            Serial.print("0");
         Serial.print(session_key_bytes[i], HEX);
     }
     Serial.println();
@@ -662,24 +681,24 @@ void MitaClient::handleIncomingMessages()
             if (packet.payload_length >= 5)
             {
                 uint8_t control_type = packet.payload[0];
-                
-                if (control_type == 0x01)  // ControlType::PONG
+
+                if (control_type == 0x01) // ControlType::PONG
                 {
                     // Extract original timestamp
                     uint32_t sent_time = ((uint32_t)packet.payload[1] << 24) |
-                                        ((uint32_t)packet.payload[2] << 16) |
-                                        ((uint32_t)packet.payload[3] << 8) |
-                                        ((uint32_t)packet.payload[4]);
-                    
+                                         ((uint32_t)packet.payload[2] << 16) |
+                                         ((uint32_t)packet.payload[3] << 8) |
+                                         ((uint32_t)packet.payload[4]);
+
                     uint32_t now = millis();
                     uint32_t rtt = now - sent_time;
-                    
+
                     Serial.printf("MitaClient: PONG received! RTT = %lu ms\n", rtt);
                 }
             }
             return;
         }
-        
+
         if (packet.msg_type == MSG_ERROR)
         {
             // Handle ERROR message from router
@@ -687,25 +706,45 @@ void MitaClient::handleIncomingMessages()
             {
                 uint8_t error_code = packet.payload[0];
                 uint16_t failed_seq = (packet.payload[1] << 8) | packet.payload[2];
-                
-                const char* error_str = "UNKNOWN";
+
+                const char *error_str = "UNKNOWN";
                 switch (error_code)
                 {
-                    case 0x01: error_str = "INVALID_SEQUENCE"; break;
-                    case 0x02: error_str = "STALE_TIMESTAMP"; break;
-                    case 0x03: error_str = "DECRYPTION_FAILED"; break;
-                    case 0x04: error_str = "INVALID_DESTINATION"; break;
-                    case 0x05: error_str = "TTL_EXPIRED"; break;
-                    case 0x06: error_str = "RATE_LIMIT_EXCEEDED"; break;
-                    case 0x07: error_str = "SESSION_EXPIRED"; break;
-                    case 0x08: error_str = "MALFORMED_PACKET"; break;
-                    case 0x09: error_str = "UNSUPPORTED_VERSION"; break;
-                    case 0x0A: error_str = "AUTHENTICATION_FAILED"; break;
+                case 0x01:
+                    error_str = "INVALID_SEQUENCE";
+                    break;
+                case 0x02:
+                    error_str = "STALE_TIMESTAMP";
+                    break;
+                case 0x03:
+                    error_str = "DECRYPTION_FAILED";
+                    break;
+                case 0x04:
+                    error_str = "INVALID_DESTINATION";
+                    break;
+                case 0x05:
+                    error_str = "TTL_EXPIRED";
+                    break;
+                case 0x06:
+                    error_str = "RATE_LIMIT_EXCEEDED";
+                    break;
+                case 0x07:
+                    error_str = "SESSION_EXPIRED";
+                    break;
+                case 0x08:
+                    error_str = "MALFORMED_PACKET";
+                    break;
+                case 0x09:
+                    error_str = "UNSUPPORTED_VERSION";
+                    break;
+                case 0x0A:
+                    error_str = "AUTHENTICATION_FAILED";
+                    break;
                 }
-                
+
                 Serial.printf("MitaClient: ERROR from router: %s (code=0x%02X, seq=%d)\n",
-                             error_str, error_code, failed_seq);
-                
+                              error_str, error_code, failed_seq);
+
                 // TODO: React to specific errors
                 // - INVALID_SEQUENCE: Reset sequence counter
                 // - SESSION_EXPIRED: Reconnect with full handshake
@@ -713,7 +752,7 @@ void MitaClient::handleIncomingMessages()
             }
             return;
         }
-        
+
         if (packet.msg_type == MSG_DATA)
         {
             uint8_t decrypted[MAX_PAYLOAD_SIZE];
@@ -788,7 +827,7 @@ String MitaClient::generateSensorData()
 void MitaClient::setQoSLevel(QoSLevel level)
 {
     qos_level = level;
-    Serial.printf("MitaClient: QoS level set to %s\n", 
+    Serial.printf("MitaClient: QoS level set to %s\n",
                   level == QoSLevel::NO_QOS ? "NO_QOS" : "WITH_ACK");
 }
 
@@ -810,25 +849,25 @@ bool MitaClient::sendDisconnect(DisconnectReason reason)
     packet.source_addr = assigned_address;
     packet.dest_addr = ROUTER_ADDRESS;
     packet.checksum = 0;
-    packet.sequence_number = 0;  // Disconnect packets don't need sequence
+    packet.sequence_number = 0; // Disconnect packets don't need sequence
     packet.ttl = DEFAULT_TTL;
-    packet.priority_flags = PRIORITY_HIGH;  // Disconnect is high priority
+    packet.priority_flags = PRIORITY_HIGH; // Disconnect is high priority
     packet.fragment_id = 0;
-    packet.timestamp = (uint32_t)millis();
+    packet.timestamp = getAdjustedTimestamp();
 
     // Payload: disconnect reason (1 byte)
     packet.payload[0] = static_cast<uint8_t>(reason);
     packet.payload_length = 1;
 
-    Serial.printf("MitaClient: Sending DISCONNECT (reason=0x%02X)\n", 
-                 static_cast<uint8_t>(reason));
+    Serial.printf("MitaClient: Sending DISCONNECT (reason=0x%02X)\n",
+                  static_cast<uint8_t>(reason));
     return transport->sendPacket(packet);
 }
 
 bool MitaClient::receiveDisconnectAck()
 {
     BasicProtocolPacket packet;
-    
+
     // Wait up to 1 second for DISCONNECT_ACK (best effort)
     if (!transport->receivePacket(packet, 1000))
     {
@@ -838,8 +877,8 @@ bool MitaClient::receiveDisconnectAck()
 
     if (packet.msg_type != MSG_DISCONNECT_ACK)
     {
-        Serial.printf("MitaClient: Expected DISCONNECT_ACK, got msg_type=0x%02X\n", 
-                     packet.msg_type);
+        Serial.printf("MitaClient: Expected DISCONNECT_ACK, got msg_type=0x%02X\n",
+                      packet.msg_type);
         return false;
     }
 
@@ -851,17 +890,17 @@ bool MitaClient::waitForAck(uint16_t expected_sequence)
 {
     unsigned long start_time = millis();
     unsigned int check_count = 0;
-    
+
     while (millis() - start_time < ACK_TIMEOUT_MS)
     {
         BasicProtocolPacket packet;
-        
-        // Check for incoming packets with moderate timeout (50ms for better responsiveness)
-        if (transport->receivePacket(packet, 50))
+
+        // Check for incoming packets with longer timeout (200ms) to handle WiFi/BLE latency
+        if (transport->receivePacket(packet, 200))
         {
             check_count++;
-            Serial.printf("MitaClient: Received packet type=0x%02X while waiting for ACK (check #%d)\n", 
-                         packet.msg_type, check_count);
+            Serial.printf("MitaClient: Received packet type=0x%02X while waiting for ACK (check #%d)\n",
+                          packet.msg_type, check_count);
             if (packet.msg_type == MSG_ACK)
             {
                 // ACK packet contains the sequence number being acknowledged
@@ -869,17 +908,24 @@ bool MitaClient::waitForAck(uint16_t expected_sequence)
                 if (packet.payload_length >= 2)
                 {
                     uint16_t acked_sequence = (packet.payload[0] << 8) | packet.payload[1];
-                    
+
                     if (acked_sequence == expected_sequence)
                     {
-                        Serial.printf("MitaClient: ACK received for sequence %d\n", expected_sequence);
+                        unsigned long rtt = millis() - start_time;
+                        Serial.printf("MitaClient: ACK received for sequence %d (RTT: %lu ms, after %d checks)\n", 
+                                      expected_sequence, rtt, check_count);
                         return true;
                     }
                     else
                     {
-                        Serial.printf("MitaClient: ACK received for wrong sequence (expected %d, got %d)\n", 
-                                    expected_sequence, acked_sequence);
+                        Serial.printf("MitaClient: ACK received for wrong sequence (expected %d, got %d)\n",
+                                      expected_sequence, acked_sequence);
                     }
+                }
+                else
+                {
+                    Serial.printf("MitaClient: ACK packet with insufficient payload (got %d bytes, need 2)\n",
+                                  packet.payload_length);
                 }
             }
             else if (packet.msg_type == MSG_ERROR)
@@ -889,30 +935,67 @@ bool MitaClient::waitForAck(uint16_t expected_sequence)
                 {
                     uint8_t error_code = packet.payload[0];
                     uint16_t failed_seq = (packet.payload[1] << 8) | packet.payload[2];
-                    
-                    const char* error_str = "UNKNOWN";
+
+                    const char *error_str = "UNKNOWN";
                     switch (error_code)
                     {
-                        case 0x01: error_str = "INVALID_SEQUENCE"; break;
-                        case 0x02: error_str = "STALE_TIMESTAMP"; break;
-                        case 0x03: error_str = "DECRYPTION_FAILED"; break;
-                        case 0x04: error_str = "INVALID_DESTINATION"; break;
-                        case 0x05: error_str = "TTL_EXPIRED"; break;
-                        case 0x06: error_str = "RATE_LIMIT_EXCEEDED"; break;
-                        case 0x07: error_str = "SESSION_EXPIRED"; break;
-                        case 0x08: error_str = "MALFORMED_PACKET"; break;
-                        case 0x09: error_str = "UNSUPPORTED_VERSION"; break;
-                        case 0x0A: error_str = "AUTHENTICATION_FAILED"; break;
+                    case 0x01:
+                        error_str = "INVALID_SEQUENCE";
+                        break;
+                    case 0x02:
+                        error_str = "STALE_TIMESTAMP";
+                        break;
+                    case 0x03:
+                        error_str = "DECRYPTION_FAILED";
+                        break;
+                    case 0x04:
+                        error_str = "INVALID_DESTINATION";
+                        break;
+                    case 0x05:
+                        error_str = "TTL_EXPIRED";
+                        break;
+                    case 0x06:
+                        error_str = "RATE_LIMIT_EXCEEDED";
+                        break;
+                    case 0x07:
+                        error_str = "SESSION_EXPIRED";
+                        break;
+                    case 0x08:
+                        error_str = "MALFORMED_PACKET";
+                        break;
+                    case 0x09:
+                        error_str = "UNSUPPORTED_VERSION";
+                        break;
+                    case 0x0A:
+                        error_str = "AUTHENTICATION_FAILED";
+                        break;
                     }
-                    
-                    Serial.printf("MitaClient: ERROR from router: %s (code=0x%02X, seq=%d)\n", 
-                                 error_str, error_code, failed_seq);
-                    
+
+                    Serial.printf("MitaClient: ERROR from router: %s (code=0x%02X, seq=%d)\n",
+                                  error_str, error_code, failed_seq);
+
+                    // Handle specific error codes
+                    if (error_code == 0x02) // STALE_TIMESTAMP
+                    {
+                        Serial.println("MitaClient: Router reports stale timestamp - session expired, need to re-authenticate");
+                        // Mark as disconnected to force re-authentication
+                        handshake_completed = false;
+                        crypto_service.clearSessionKey();
+                        return false;
+                    }
+                    else if (error_code == 0x07) // SESSION_EXPIRED
+                    {
+                        Serial.println("MitaClient: Router reports session expired - need to re-authenticate");
+                        handshake_completed = false;
+                        crypto_service.clearSessionKey();
+                        return false;
+                    }
+
                     // If this error is for our current sequence, treat it as a failed ACK
                     if (failed_seq == expected_sequence)
                     {
                         Serial.printf("MitaClient: Packet seq=%d rejected by router, stopping retries\n", expected_sequence);
-                        return false;  // Stop retrying - packet was rejected
+                        return false; // Stop retrying - packet was rejected
                     }
                 }
             }
@@ -931,8 +1014,8 @@ bool MitaClient::waitForAck(uint16_t expected_sequence)
                 aad[5] = packet.sequence_number & 0xFF;
 
                 if (crypto_service.decryptGCM(packet.payload, packet.payload_length,
-                                             aad, sizeof(aad),
-                                             decrypted, decrypted_length))
+                                              aad, sizeof(aad),
+                                              decrypted, decrypted_length))
                 {
                     String message = String((char *)decrypted, decrypted_length);
                     Serial.printf("MitaClient: Received message while waiting for ACK: %s\n", message.c_str());
@@ -947,8 +1030,11 @@ bool MitaClient::waitForAck(uint16_t expected_sequence)
             }
         }
     }
-    
-    Serial.printf("MitaClient: ACK timeout for sequence %d after %u checks\n", expected_sequence, check_count);
+
+    unsigned long total_wait = millis() - start_time;
+    Serial.printf("MitaClient: ✗ ACK TIMEOUT for sequence %d (waited %lu ms, %u receive checks, no ACK received)\n", 
+                  expected_sequence, total_wait, check_count);
+    Serial.printf("MitaClient: Router may not be sending ACK or transport layer issue detected\n");
     return false;
 }
 
@@ -962,11 +1048,13 @@ bool MitaClient::sendEncryptedMessageWithQoS(uint16_t dest_addr, const String &m
 
     // Increment packet counter for session key rotation
     packets_sent++;
-    
+
     // Check if we need to rotate session key
-    if (packets_sent >= REKEY_PACKET_THRESHOLD) {
+    if (packets_sent >= REKEY_PACKET_THRESHOLD)
+    {
         Serial.println("MitaClient: Packet threshold reached, triggering session rekey");
-        if (!performSessionRekey()) {
+        if (!performSessionRekey())
+        {
             Serial.println("MitaClient: Session rekey failed, continuing with old key");
         }
     }
@@ -982,20 +1070,20 @@ bool MitaClient::sendEncryptedMessageWithQoS(uint16_t dest_addr, const String &m
     packet.checksum = 0;
     packet.sequence_number = sequence_counter;
     packet.ttl = DEFAULT_TTL;
-    
+
     // Set priority and QoS flags
     packet.priority_flags = PRIORITY_NORMAL;
     if (qos == QoSLevel::NO_QOS)
     {
-        packet.priority_flags |= FLAG_QOS_NO_ACK;  // Tell router: don't send ACK
+        packet.priority_flags |= FLAG_QOS_NO_ACK; // Tell router: don't send ACK
     }
     else
     {
-        packet.priority_flags |= FLAG_QOS_RELIABLE;  // Tell router: send ACK
+        packet.priority_flags |= FLAG_QOS_RELIABLE; // Tell router: send ACK
     }
-    
+
     packet.fragment_id = 0;
-    packet.timestamp = (uint32_t)millis();
+    packet.timestamp = getAdjustedTimestamp();
 
     // Build AAD
     uint8_t aad[6];
@@ -1005,7 +1093,7 @@ bool MitaClient::sendEncryptedMessageWithQoS(uint16_t dest_addr, const String &m
     aad[3] = dest_addr & 0xFF;
     aad[4] = (sequence_counter >> 8) & 0xFF;
     aad[5] = sequence_counter & 0xFF;
-    
+
     size_t encrypted_len;
     if (!crypto_service.encryptGCM((uint8_t *)message.c_str(), message.length(),
                                    aad, sizeof(aad),
@@ -1024,9 +1112,9 @@ bool MitaClient::sendEncryptedMessageWithQoS(uint16_t dest_addr, const String &m
         {
             if (attempt > 0)
             {
-                Serial.printf("MitaClient: Retry %d/%d for sequence %d\n", 
-                            attempt, MAX_RETRIES, sequence_counter);
-                
+                Serial.printf("MitaClient: Retry %d/%d for sequence %d\n",
+                              attempt, MAX_RETRIES, sequence_counter);
+
                 // Before retrying, check one more time if ACK arrived
                 // This handles cases where ACK arrived during the delay
                 BasicProtocolPacket check_packet;
@@ -1054,8 +1142,8 @@ bool MitaClient::sendEncryptedMessageWithQoS(uint16_t dest_addr, const String &m
                 }
             }
 
-            Serial.printf("MitaClient: Sending DATA with QoS (seq=%d, attempt=%d, %d bytes)\n", 
-                         sequence_counter, attempt + 1, encrypted_len);
+            Serial.printf("MitaClient: Sending DATA with QoS (seq=%d, attempt=%d, %d bytes)\n",
+                          sequence_counter, attempt + 1, encrypted_len);
 
             if (!transport->sendPacket(packet))
             {
@@ -1073,22 +1161,22 @@ bool MitaClient::sendEncryptedMessageWithQoS(uint16_t dest_addr, const String &m
             // If this was the last attempt, fail
             if (attempt == MAX_RETRIES)
             {
-                Serial.printf("MitaClient: Failed to deliver message after %d attempts (seq=%d)\n", 
-                            MAX_RETRIES + 1, sequence_counter);
+                Serial.printf("MitaClient: Failed to deliver message after %d attempts (seq=%d)\n",
+                              MAX_RETRIES + 1, sequence_counter);
                 return false;
             }
 
             // Wait a bit before retry (exponential backoff)
             delay(500 * (attempt + 1));
         }
-        
+
         return false;
     }
     else
     {
         // NO_QOS: Fire and forget
-        Serial.printf("MitaClient: Sending DATA without QoS (seq=%d, %d bytes)\n", 
-                     sequence_counter, encrypted_len);
+        Serial.printf("MitaClient: Sending DATA without QoS (seq=%d, %d bytes)\n",
+                      sequence_counter, encrypted_len);
         bool sent = transport->sendPacket(packet);
         if (sent)
         {
@@ -1098,26 +1186,27 @@ bool MitaClient::sendEncryptedMessageWithQoS(uint16_t dest_addr, const String &m
     }
 }
 
-bool MitaClient::performSessionRekey() {
+bool MitaClient::performSessionRekey()
+{
     Serial.println("MitaClient: Starting session key rotation");
-    
+
     // Generate new client nonce (nonce3)
     uint8_t new_client_nonce[16];
     crypto_service.generateNonce(new_client_nonce);
-    
+
     // Build SESSION_REKEY_REQ packet
     BasicProtocolPacket packet;
-    packet.version_flags = (PROTOCOL_VERSION << 4);  // Not encrypted
+    packet.version_flags = (PROTOCOL_VERSION << 4); // Not encrypted
     packet.msg_type = MSG_SESSION_REKEY_REQ;
     packet.source_addr = assigned_address;
-    packet.dest_addr = 0;  // To router
-    packet.checksum = 0;  // Will be computed by transport
-    packet.sequence_number = 0;  // Control packet, no sequence
+    packet.dest_addr = 0;       // To router
+    packet.checksum = 0;        // Will be computed by transport
+    packet.sequence_number = 0; // Control packet, no sequence
     packet.ttl = DEFAULT_TTL;
     packet.priority_flags = PRIORITY_HIGH;
     packet.fragment_id = 0;
-    packet.timestamp = (uint32_t)millis();
-    
+    packet.timestamp = getAdjustedTimestamp();
+
     // Payload: [packets_sent(4 bytes)] + [new_client_nonce(16 bytes)]
     uint8_t payload[20];
     payload[0] = (packets_sent >> 24) & 0xFF;

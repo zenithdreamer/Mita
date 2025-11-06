@@ -11,11 +11,11 @@ import { StatusCard } from "../atoms/StatusCard";
 
 interface RoutingTableProps {
     data: {
-        id: string;
-        name: string;
-        type: string;
+        device_id: string;
+        device_type: string;
         status: string;
-        lastseen: string;
+        assigned_address: string;
+        last_seen: string;
     }[];
 }
 
@@ -26,9 +26,9 @@ export function RoutingTable({ data }: RoutingTableProps) {
                 <TableHeader>
                     <TableRow>
                         <TableHead className="font-semibold">Device ID</TableHead>
-                        <TableHead className="font-semibold">Name</TableHead>
                         <TableHead className="font-semibold">Type</TableHead>
                         <TableHead className="font-semibold">Status</TableHead>
+                        <TableHead className="font-semibold">Assigned Address</TableHead>
                         <TableHead className="font-semibold">Last Seen</TableHead>
                     </TableRow>
                 </TableHeader>
@@ -41,18 +41,18 @@ export function RoutingTable({ data }: RoutingTableProps) {
                         </TableRow>
                     ) : (
                         data.map((device) => (
-                            <TableRow key={device.id} className="hover:bg-muted/50">
-                                <TableCell className="font-mono text-sm">{device.id}</TableCell>
-                                <TableCell className="font-medium">{device.name}</TableCell>
+                            <TableRow key={device.device_id} className="hover:bg-muted/50">
+                                <TableCell className="font-mono text-sm">{device.device_id}</TableCell>
                                 <TableCell>
                                     <Badge variant="outline" className="bg-blue-50 dark:bg-blue-950 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800">
-                                        {device.type}
+                                        {device.device_type}
                                     </Badge>
                                 </TableCell>
                                 <TableCell>
                                     <StatusCard status={device.status} />
                                 </TableCell>
-                                <TableCell className="text-muted-foreground">{device.lastseen}</TableCell>
+                                <TableCell className="font-medium">{device.assigned_address}</TableCell>
+                                <TableCell className="text-muted-foreground">{device.last_seen}</TableCell>
                             </TableRow>
                         ))
                     )}

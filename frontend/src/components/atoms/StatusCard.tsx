@@ -8,8 +8,9 @@ export function StatusCard({ status }: { status: string }) {
     };
 
     return (
-        <Badge variant={"outline"} className={getCustomClass()}>
-            {status}
+        <Badge variant={"outline"}>
+            <span className={`inline-block w-2.5 h-2.5 rounded-full ${getCustomClass()} capitalize`} aria-hidden="true" />
+            <span className="capitalize ml-2">{status}</span>
         </Badge>
     );
 }

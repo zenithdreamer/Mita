@@ -2,25 +2,25 @@ import { RoutingTablePage } from "@/pages/RoutingTablePage"
 
 const mockRoutingData = [
   {
-    id: "1",
-    name: "Device-001",
-    type: "WiFi",
+    device_id: "1",
+    device_type: "WiFi",
     status: "active",
-    lastseen: new Date().toISOString(),
+    assigned_address: "192.168.1.1",
+    last_seen: new Date().toISOString(),
   },
   {
-    id: "2",
-    name: "BLE-Sensor-01",
-    type: "BLE",
+    device_id: "2",
+    device_type: "BLE",
     status: "active",
-    lastseen: new Date().toISOString(),
+    assigned_address: "192.168.1.2",
+    last_seen: new Date().toISOString(),
   },
   {
-    id: "3",
-    name: "Zigbee-Light-05",
-    type: "Zigbee",
+    device_id: "3",
+    device_type: "Zigbee",
     status: "inactive",
-    lastseen: new Date(Date.now() - 3600000).toISOString(),
+    assigned_address: "192.168.1.3",
+    last_seen: new Date(Date.now() - 3600000).toISOString(),
   },
 ]
 

@@ -2,11 +2,11 @@ import { RoutingTable } from "../components/organisms/RoutingTable";
 
 interface RoutingTablePageProps {
     data: {
-        id: string;
-        name: string;
-        type: string;
+        device_id: string;
+        device_type: string;
         status: string;
-        lastseen: string;
+        assigned_address: string;
+        last_seen: string;
     }[];
     onNavigateToPackets?: () => void;
 }

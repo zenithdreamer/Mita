@@ -14,13 +14,13 @@ echo ""
 sudo chown -R "$CURRENT_USER:$CURRENT_USER" "$SCRIPT_DIR"
 
 if [ $? -eq 0 ]; then
-    echo "✓ Ownership successfully changed to $CURRENT_USER"
+    echo "Ownership successfully changed to $CURRENT_USER"
     echo ""
     echo "You can now build without sudo:"
     echo "  cd router/build"
     echo "  cmake .."
     echo "  make"
 else
-    echo "✗ Failed to change ownership"
+    echo "Failed to change ownership"
     exit 1
 fi

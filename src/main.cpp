@@ -6,6 +6,7 @@
 #include "core/mita_client.h"
 #include "transport/wifi_transport.h"
 #include "transport/ble_transport.h"
+#include "transport/protocol_selector.h"
 #include "messaging/message_handler.h"
 #include "../shared/config/mita_config.h"
 
@@ -22,10 +23,12 @@ const char *DEVICE_ID = MITA_DEFAULT_DEVICE_ID;
 MitaClient *mitaClient = nullptr;
 CommandHandler *commandHandler = nullptr;
 PingHandler *pingHandler = nullptr;
+ProtocolSelector *protocolSelector = nullptr;
 
 // Function prototypes
 bool initializeDevice();
 bool connectToNetwork();
+bool connectToNetworkSmart();
 void printStatus();
 
 void setup()
@@ -35,7 +38,7 @@ void setup()
 
     Serial.println();
     Serial.println("================================================");
-    Serial.println("             Mita - ESP32 Client");
+    Serial.println("       Mita - ESP32 Client");
     Serial.println("================================================");
     Serial.printf("Device ID: %s\n", DEVICE_ID);
     Serial.printf("Router ID: %s\n", ROUTER_ID);
@@ -47,7 +50,8 @@ void setup()
         return;
     }
 
-    if (connectToNetwork())
+    // Use smart protocol selection
+    if (connectToNetworkSmart())
     {
         Serial.println("Successfully connected to Mita network!");
         printStatus();
@@ -77,8 +81,8 @@ void loop()
 
         if (current_time - last_reconnect_attempt >= MITA_RECONNECT_INTERVAL_MS)
         { // Try reconnecting at configured interval
-            Serial.println("Connection lost, attempting to reconnect...");
-            if (connectToNetwork())
+            Serial.println("Connection lost, attempting smart reconnect...");
+            if (connectToNetworkSmart())
             {
                 Serial.println("Reconnected to network!");
                 printStatus();
@@ -100,7 +104,7 @@ bool initializeDevice()
     // Create network configuration
     NetworkConfig config;
     config.router_id = ROUTER_ID;
-    config.shared_secret = SHARED_SECRET;
+    config.shared_secret = SHARED_SECRET; // Master secret (always derives device PSK)
     config.device_id = DEVICE_ID;
 
     // Create device instance
@@ -118,6 +122,17 @@ bool initializeDevice()
         return false;
     }
 
+    // Create smart protocol selector
+    // Strategies: ADAPTIVE (learns), LAST_SUCCESSFUL, FASTEST, STRONGEST_SIGNAL, PREFER_WIFI, PREFER_BLE
+    protocolSelector = new ProtocolSelector(DEVICE_ID, SelectionStrategy::ADAPTIVE);
+    if (!protocolSelector)
+    {
+        Serial.println("Failed to create ProtocolSelector instance");
+        delete mitaClient;
+        mitaClient = nullptr;
+        return false;
+    }
+
     // Create and register message handlers
     commandHandler = new CommandHandler(DEVICE_ID);
     pingHandler = new PingHandler(DEVICE_ID);
@@ -128,14 +143,22 @@ bool initializeDevice()
         delete mitaClient;
         delete commandHandler;
         delete pingHandler;
+        delete protocolSelector;
         mitaClient = nullptr;
         commandHandler = nullptr;
         pingHandler = nullptr;
+        protocolSelector = nullptr;
         return false;
     }
 
     mitaClient->addMessageHandler(commandHandler);
     mitaClient->addMessageHandler(pingHandler);
+
+    // Configure QoS level (optional - defaults to WITH_ACK)
+    // QoSLevel::NO_QOS = Fire-and-forget, no ACK, UDP-like (faster, no reliability)
+    // QoSLevel::WITH_ACK = Wait for ACK with retry, MQTT-like (reliable, slower)
+    mitaClient->setQoSLevel(QoSLevel::WITH_ACK); // Default: reliable delivery
+    // mitaClient->setQoSLevel(QoSLevel::NO_QOS);  // Uncomment for faster, best-effort delivery
 
     Serial.println("Device initialized successfully");
     return true;
@@ -172,6 +195,41 @@ bool connectToNetwork()
     delete ble_transport;
     Serial.println("All connection methods failed");
     return false;
+}
+
+bool connectToNetworkSmart()
+{
+    if (!mitaClient || !protocolSelector)
+    {
+        Serial.println("ERROR: MitaClient or ProtocolSelector not initialized");
+        return false;
+    }
+
+    Serial.println();
+    Serial.println("========================================");
+    Serial.println("   Smart Protocol Selection");
+    Serial.println("========================================");
+
+    // Show current statistics
+    protocolSelector->printStats();
+
+    // Use smart connection method
+    bool connected = mitaClient->connectToNetworkSmart(protocolSelector, SHARED_SECRET);
+
+    if (connected)
+    {
+        Serial.println("========================================");
+        Serial.println("   Connection Successful!");
+        Serial.println("========================================");
+    }
+    else
+    {
+        Serial.println("========================================");
+        Serial.println("   Connection Failed");
+        Serial.println("========================================");
+    }
+
+    return connected;
 }
 
 void printStatus()

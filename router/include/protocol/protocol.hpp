@@ -9,6 +9,7 @@
 #include <deque>
 #include <chrono>
 #include <mutex>
+#include <atomic>
 #include "protocol/protocol_types.h"
 
 namespace mita
@@ -45,13 +46,13 @@ namespace mita
             uint16_t get_dest_addr() const { return dest_addr_; }
             const std::vector<uint8_t> &get_payload() const { return payload_; }
             bool is_encrypted() const { return flags_ & FLAG_ENCRYPTED; }
-            uint8_t get_checksum() const { return checksum_; }
+            uint16_t get_checksum() const { return checksum_; }
             uint16_t get_sequence_number() const { return sequence_number_; }
             uint8_t get_ttl() const { return ttl_; }
             uint8_t get_priority() const { return priority_flags_ & PRIORITY_MASK; }
             uint8_t get_priority_flags() const { return priority_flags_; }
             uint16_t get_fragment_id() const { return fragment_id_; }
-            uint16_t get_timestamp() const { return timestamp_; }
+            uint32_t get_timestamp() const { return timestamp_; }
             bool is_fragmented() const { return priority_flags_ & FLAG_FRAGMENTED; }
             bool has_more_fragments() const { return priority_flags_ & FLAG_MORE_FRAGMENTS; }
 
@@ -64,7 +65,7 @@ namespace mita
             void set_ttl(uint8_t ttl) { ttl_ = ttl; }
             void set_priority(uint8_t priority) { priority_flags_ = (priority_flags_ & ~PRIORITY_MASK) | (priority & PRIORITY_MASK); }
             void set_fragment_id(uint16_t frag_id) { fragment_id_ = frag_id; }
-            void set_timestamp(uint16_t ts) { timestamp_ = ts; }
+            void set_timestamp(uint32_t ts) { timestamp_ = ts; } 
             void set_fragmented(bool fragmented);
             void decrement_ttl() { if (ttl_ > 0) ttl_--; }
 
@@ -74,16 +75,18 @@ namespace mita
             uint8_t msg_type_ = 0;
             uint16_t source_addr_ = 0;
             uint16_t dest_addr_ = 0;
-            uint8_t checksum_ = 0;
+            uint16_t checksum_ = 0; 
             uint16_t sequence_number_ = 0;
             uint8_t ttl_ = DEFAULT_TTL;
             uint8_t priority_flags_ = PRIORITY_NORMAL;
             uint16_t fragment_id_ = 0;
-            uint16_t timestamp_ = 0;
+            uint32_t timestamp_ = 0; 
             std::vector<uint8_t> payload_;
 
-            uint8_t compute_checksum() const;
-            bool verify_checksum(uint8_t received_checksum) const;
+        // NOTE: CRC-16 is for basic integrity checking only (transport errors)
+        // NOT for security - use GCM authentication tags for cryptographic integrity
+        uint16_t compute_checksum() const;
+        bool verify_checksum(uint16_t received_checksum) const;
         };
 
         /**
@@ -113,11 +116,22 @@ namespace mita
             // HMAC verification (legacy, for control packets)
             std::vector<uint8_t> compute_hmac(const std::vector<uint8_t> &data);
             bool verify_hmac(const std::vector<uint8_t> &data, const std::vector<uint8_t> &hmac);
+            
+            // Session key rotation for forward secrecy
+            void rekey(const std::vector<uint8_t> &nonce3, const std::vector<uint8_t> &nonce4);
+            
+            // Getter for session key (for logging/debugging)
+            const std::vector<uint8_t>& get_session_key() const { return session_key_; }
 
         private:
             std::vector<uint8_t> session_key_;
             std::vector<uint8_t> encryption_key_;  // Derived key for AES
             std::vector<uint8_t> mac_key_;         // Derived key for HMAC (separate from encryption key)
+            
+            // Counter-based IV to prevent IV reuse
+            std::atomic<uint64_t> iv_counter_;
+            uint32_t session_salt_;  // Random salt generated once per session
+            
             class Impl;
             std::unique_ptr<Impl> impl_;
             
@@ -146,7 +160,7 @@ namespace mita
             struct RateLimitState
             {
                 std::deque<std::chrono::steady_clock::time_point> attempts;
-                size_t max_attempts = 5;
+                size_t max_attempts = 3;  // Reduced from 5 to 3 for stricter security
                 std::chrono::seconds window{60};
             };
 
@@ -177,13 +191,36 @@ namespace mita
             std::map<std::string, HandshakeState> pending_handshakes_;
             mutable std::mutex handshakes_mutex_;
             
-            // Rate limiting state
+            // Rate limiting state (per-device)
             std::map<std::string, RateLimitState> rate_limits_;
             mutable std::mutex rate_limit_mutex_;
+            
+            // Global rate limiting (prevents distributed DoS)
+            std::deque<std::chrono::steady_clock::time_point> global_handshake_attempts_;
+            size_t global_max_attempts_ = 50;  // Max 50 handshakes per minute globally
+            std::chrono::seconds global_window_{60};
+            mutable std::mutex global_rate_limit_mutex_;
+            
+            // Nonce tracking (prevents nonce reuse attacks)
+            struct NonceRecord
+            {
+                std::vector<uint8_t> nonce;
+                std::chrono::steady_clock::time_point timestamp;
+            };
+            std::deque<NonceRecord> recent_nonces_;
+            size_t max_nonce_history_ = 100;  // Track last 100 nonces
+            std::chrono::seconds nonce_expiry_{300};  // Nonces expire after 5 minutes
+            mutable std::mutex nonce_tracking_mutex_;
 
             std::vector<uint8_t> derive_session_key(const std::vector<uint8_t> &nonce1,
                                                     const std::vector<uint8_t> &nonce2);
+            std::vector<uint8_t> derive_session_key_with_device_psk(const std::vector<uint8_t> &nonce1,
+                                                                     const std::vector<uint8_t> &nonce2,
+                                                                     const std::string &device_id);
             std::vector<uint8_t> generate_nonce();
+            bool check_global_rate_limit();
+            bool is_nonce_reused(const std::vector<uint8_t> &nonce);
+            void record_nonce(const std::vector<uint8_t> &nonce);
         };
 
         /**

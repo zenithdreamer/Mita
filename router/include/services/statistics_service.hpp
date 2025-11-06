@@ -43,6 +43,12 @@ namespace mita
             uint64_t protocol_errors = 0;
             uint64_t transport_errors = 0;
 
+            // Security metrics (Task 4,5,6)
+            uint64_t sequence_gaps_detected = 0;
+            uint64_t replay_attempts_blocked = 0;
+            uint64_t stale_packets_dropped = 0;
+            uint64_t session_rekeys_completed = 0;
+
             // Performance metrics
             uint64_t average_latency_ms = 0;
             uint64_t peak_concurrent_connections = 0;
@@ -82,6 +88,12 @@ namespace mita
             std::atomic<uint64_t> errors{0};
             std::atomic<uint64_t> protocol_errors{0};
             std::atomic<uint64_t> transport_errors{0};
+
+            // Security metrics (Task 4,5,6)
+            std::atomic<uint64_t> sequence_gaps_detected{0};
+            std::atomic<uint64_t> replay_attempts_blocked{0};
+            std::atomic<uint64_t> stale_packets_dropped{0};
+            std::atomic<uint64_t> session_rekeys_completed{0};
 
             // Performance metrics
             std::atomic<uint64_t> average_latency_ms{0};
@@ -162,6 +174,12 @@ namespace mita
             void record_error();
             void record_protocol_error();
             void record_transport_error();
+
+            // Security metrics (Task 4,5,6)
+            void record_sequence_gap();
+            void record_replay_attempt();
+            void record_stale_packet();
+            void record_session_rekey();
 
             // Performance metrics
             void record_latency(uint64_t latency_ms);

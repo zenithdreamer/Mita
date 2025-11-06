@@ -6,9 +6,8 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
-import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { RefreshCw, Pause, Play, Trash2, Loader2, ChevronLeft, ChevronRight, X, Lock, Unlock, Settings, Key, Save } from 'lucide-react';
+import { RefreshCw, Pause, Play, Trash2, Loader2, ChevronLeft, ChevronRight, X, Unlock } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Separator } from '@/components/ui/separator';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -27,18 +26,6 @@ export function PacketMonitorPage() {
     const [currentPage, setCurrentPage] = useState(1);
     const [totalPackets, setTotalPackets] = useState(0);
     const [pageSize, setPageSize] = useState(50);
-
-    // Decrypt state
-    const [sessionKey, setSessionKey] = useState('');
-    const [decryptedData, setDecryptedData] = useState<string | null>(null);
-    const [decryptError, setDecryptError] = useState<string | null>(null);
-    const [isDecrypting, setIsDecrypting] = useState(false);
-
-    // Stored key for auto-decrypt
-    const [storedKey, setStoredKey] = useState<string>(() => {
-        return localStorage.getItem('mita_encryption_key') || '';
-    });
-    const [showKeySettings, setShowKeySettings] = useState(false);
 
     const fetchPackets = async () => {
         try {
@@ -142,141 +129,9 @@ export function PacketMonitorPage() {
         }
     }, [autoRefresh, currentPage, pageSize]);
 
-    // Auto-decrypt when packet is selected and stored key exists
-    useEffect(() => {
-        if (selectedPacket && selectedPacket.encrypted && storedKey && storedKey.length === 32) {
-            // Clear previous decrypt state first
-            setDecryptError(null);
-            setDecryptedData(null);
-            // Trigger auto-decrypt
-            decryptPayload(storedKey);
-        } else {
-            // Clear decrypt state if packet is not encrypted or no key
-            setDecryptError(null);
-            setDecryptedData(null);
-        }
-    }, [selectedPacket?.id, storedKey]);
-
     const formatDate = (timestamp: number | undefined) => {
         if (!timestamp) return 'N/A';
         return new Date(timestamp).toLocaleString();
-    };
-
-    // Decrypt functions
-    const hexToBytes = (hex: string): Uint8Array => {
-        const cleanHex = hex.replace(/[^0-9a-fA-F]/g, '');
-        const bytes = new Uint8Array(cleanHex.length / 2);
-        for (let i = 0; i < cleanHex.length; i += 2) {
-            bytes[i / 2] = parseInt(cleanHex.substr(i, 2), 16);
-        }
-        return bytes;
-    };
-
-    const saveStoredKey = (key: string) => {
-        const cleanKey = key.replace(/[^0-9a-fA-F]/g, '');
-        if (cleanKey.length === 32 || cleanKey.length === 0) {
-            setStoredKey(cleanKey);
-            localStorage.setItem('mita_encryption_key', cleanKey);
-            toast({
-                title: cleanKey ? "Key Saved" : "Key Cleared",
-                description: cleanKey ? "Encryption key saved. Encrypted packets will auto-decrypt." : "Encryption key cleared.",
-            });
-        } else {
-            toast({
-                title: "Invalid Key",
-                description: "Key must be 32 hex characters (16 bytes)",
-                variant: "destructive",
-            });
-        }
-    };
-
-    const decryptPayload = async (keyToUse?: string) => {
-        if (!selectedPacket) return;
-
-        setIsDecrypting(true);
-        setDecryptError(null);
-        setDecryptedData(null);
-
-        try {
-            const key = keyToUse || sessionKey;
-            // Ensure key is a string
-            const keyStr = typeof key === 'string' ? key : String(key);
-            const cleanKey = keyStr.replace(/[^0-9a-fA-F]/g, '');
-            if (cleanKey.length !== 32) {
-                throw new Error('Session key must be 32 hex characters (16 bytes)');
-            }
-
-            const rawBytes = hexToBytes(selectedPacket.rawData || '');
-
-            if (rawBytes.length <= 16) {
-                throw new Error('Packet too short - no payload to decrypt');
-            }
-
-            const payloadBytes = rawBytes.slice(16);
-
-            // AES-GCM format: IV (12 bytes) || Ciphertext || Tag (16 bytes)
-            // Minimum: 12 (IV) + 16 (tag) = 28 bytes
-            if (payloadBytes.length < 28) {
-                throw new Error('Encrypted payload too short for GCM decryption');
-            }
-
-            // Extract components for AES-GCM
-            const iv = payloadBytes.slice(0, 12);  // 12-byte IV for GCM
-            const ciphertextWithTag = payloadBytes.slice(12);  // Ciphertext + tag (16 bytes at end)
-
-            // Derive encryption key from session key using HMAC-SHA256
-            // encryption_key = HMAC-SHA256(session_key, "ENC")
-            const sessionKeyBytes = hexToBytes(cleanKey);
-            
-            const sessionCryptoKey = await crypto.subtle.importKey(
-                'raw',
-                sessionKeyBytes as BufferSource,
-                { name: 'HMAC', hash: 'SHA-256' },
-                false,
-                ['sign']
-            );
-            
-            const encInfo = new TextEncoder().encode('ENC');
-            const encKeyFull = await crypto.subtle.sign('HMAC', sessionCryptoKey, encInfo);
-            const encKeyBytes = new Uint8Array(encKeyFull).slice(0, 16); // First 16 bytes for AES-128
-            
-            const cryptoKey = await crypto.subtle.importKey(
-                'raw',
-                encKeyBytes as BufferSource,
-                { name: 'AES-GCM', length: 128 },
-                false,
-                ['decrypt']
-            );
-
-            const decryptedBytes = await crypto.subtle.decrypt(
-                { name: 'AES-GCM', iv: iv, tagLength: 128 },  // 128-bit tag = 16 bytes
-                cryptoKey,
-                ciphertextWithTag
-            );
-
-            const decoder = new TextDecoder('utf-8');
-            let result = decoder.decode(decryptedBytes);
-
-            const printableChars = result.split('').filter(c => {
-                const code = c.charCodeAt(0);
-                return code >= 32 && code <= 126 || code === 10 || code === 13;
-            }).length;
-
-            if (printableChars / result.length < 0.7) {
-                const hexString = Array.from(new Uint8Array(decryptedBytes))
-                    .map(b => b.toString(16).padStart(2, '0'))
-                    .join(' ');
-                result = `[Binary Data - Hex]\n${hexString}`;
-            }
-
-            setDecryptedData(result);
-            
-            console.log('GCM decryption successful - authentication verified');
-        } catch (err) {
-            setDecryptError(err instanceof Error ? err.message : 'Decryption failed (GCM authentication may have failed)');
-        } finally {
-            setIsDecrypting(false);
-        }
     };
 
     // Pagination calculations
@@ -346,14 +201,7 @@ export function PacketMonitorPage() {
                                 <Trash2 className="h-4 w-4 mr-2" />
                                 Clear
                             </Button>
-                            <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => setShowKeySettings(!showKeySettings)}
-                            >
-                                <Settings className="h-4 w-4 mr-2" />
-                                Settings
-                            </Button>
+
                         </div>
                     </div>
                 </CardHeader>
@@ -398,75 +246,6 @@ export function PacketMonitorPage() {
                     </div>
                 </CardContent>
             </Card>
-
-            {/* Encryption Key Settings */}
-            {showKeySettings && (
-                <Card>
-                    <CardHeader>
-                        <CardTitle className="flex items-center gap-2">
-                            <Key className="h-5 w-5" />
-                            Auto-Decrypt Settings
-                        </CardTitle>
-                        <CardDescription>
-                            Save an encryption key to automatically decrypt encrypted packets
-                        </CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                        <div className="space-y-4">
-                            <div className="space-y-2">
-                                <Label htmlFor="stored-key">
-                                    AES-128 Encryption Key (32 hex characters)
-                                </Label>
-                                <div className="flex gap-2">
-                                    <Input
-                                        id="stored-key"
-                                        type="text"
-                                        value={storedKey}
-                                        onChange={(e) => setStoredKey(e.target.value)}
-                                        placeholder="e.g., 0123456789abcdef0123456789abcdef"
-                                        className="font-mono"
-                                    />
-                                    <Button
-                                        onClick={() => saveStoredKey(storedKey)}
-                                        size="sm"
-                                    >
-                                        <Save className="h-4 w-4 mr-2" />
-                                        Save
-                                    </Button>
-                                    {storedKey && (
-                                        <Button
-                                            onClick={() => {
-                                                setStoredKey('');
-                                                saveStoredKey('');
-                                            }}
-                                            variant="outline"
-                                            size="sm"
-                                        >
-                                            Clear
-                                        </Button>
-                                    )}
-                                </div>
-                                <p className="text-xs text-muted-foreground">
-                                    When a key is saved, encrypted packets will automatically decrypt when selected.
-                                    The key is stored locally in your browser.
-                                </p>
-                            </div>
-
-                            {localStorage.getItem('mita_encryption_key') && (
-                                <div className="bg-muted p-3 rounded-md">
-                                    <div className="flex items-center gap-2 text-sm">
-                                        <Lock className="h-4 w-4 text-green-500" />
-                                        <span className="font-medium">Auto-decrypt enabled</span>
-                                    </div>
-                                    <p className="text-xs text-muted-foreground mt-1">
-                                        Encrypted packets will automatically decrypt when selected
-                                    </p>
-                                </div>
-                            )}
-                        </div>
-                    </CardContent>
-                </Card>
-            )}
 
             {error && (
                 <Card className="border-destructive">
@@ -561,12 +340,7 @@ export function PacketMonitorPage() {
                                     <Button
                                         variant="ghost"
                                         size="sm"
-                                        onClick={() => {
-                                            setSelectedPacket(null);
-                                            setDecryptedData(null);
-                                            setDecryptError(null);
-                                            setSessionKey('');
-                                        }}
+                                        onClick={() => setSelectedPacket(null)}
                                     >
                                         <X className="h-4 w-4" />
                                     </Button>
@@ -613,7 +387,7 @@ export function PacketMonitorPage() {
 
                                         {/* Packet Info */}
                                         <div>
-                                            <h3 className="font-semibold mb-2">Packet Information</h3>
+                                            <h3 className="font-semibold mb-2">Packet Header</h3>
                                             <div className="space-y-2 text-sm">
                                                 <div className="grid grid-cols-3 gap-2">
                                                     <span className="text-muted-foreground">Source:</span>
@@ -630,7 +404,7 @@ export function PacketMonitorPage() {
                                                     </span>
                                                 </div>
                                                 <div className="grid grid-cols-3 gap-2">
-                                                    <span className="text-muted-foreground">Size:</span>
+                                                    <span className="text-muted-foreground">Payload Size:</span>
                                                     <span className="col-span-2">{selectedPacket.payloadSize} bytes</span>
                                                 </div>
                                                 <div className="grid grid-cols-3 gap-2">
@@ -643,6 +417,35 @@ export function PacketMonitorPage() {
                                                 </div>
                                             </div>
                                         </div>
+
+                                        <Separator />
+
+                                        {/* Additional Header Fields */}
+                                        <div>
+                                            <h3 className="font-semibold mb-2">Header Details</h3>
+                                            <div className="space-y-1 text-sm">
+                                                <div className="bg-muted/50 p-2 rounded-md font-mono text-xs space-y-1">
+                                                    {selectedPacket.decodedHeader && selectedPacket.decodedHeader.split('\n').map((line, idx) => (
+                                                        <div key={idx} className="flex">
+                                                            <span className="text-muted-foreground min-w-[140px]">{line.split(':')[0]}:</span>
+                                                            <span className="flex-1">{line.split(':').slice(1).join(':')}</span>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {selectedPacket.errorFlags && (
+                                            <>
+                                                <Separator />
+                                                <div>
+                                                    <h3 className="font-semibold mb-2 text-destructive">Error Information</h3>
+                                                    <div className="bg-destructive/10 border border-destructive/20 p-3 rounded-md">
+                                                        <p className="text-sm text-destructive font-mono">{selectedPacket.errorFlags}</p>
+                                                    </div>
+                                                </div>
+                                            </>
+                                        )}
 
                                     </div>
                                         </TabsContent>
@@ -676,64 +479,19 @@ export function PacketMonitorPage() {
                                                 </div>
                                             </div>
 
-                                            {/* Decrypt Section - Only show if encrypted */}
-                                            {selectedPacket.encrypted && (
+                                            {/* Decrypted Payload - Show if decrypted by backend */}
+                                            {selectedPacket.decryptedPayload && (
                                                 <>
                                                     <Separator />
                                                     <div>
                                                         <h3 className="font-semibold mb-2 flex items-center gap-2">
                                                             <Unlock className="h-4 w-4" />
-                                                            Decrypt Payload
+                                                            Decrypted Payload
                                                         </h3>
-                                                        <div className="space-y-3">
-                                                            <div className="space-y-2">
-                                                                <Label htmlFor="session-key" className="text-xs">
-                                                                    Session Key (32 hex chars)
-                                                                </Label>
-                                                                <Input
-                                                                    id="session-key"
-                                                                    type="text"
-                                                                    value={sessionKey}
-                                                                    onChange={(e) => setSessionKey(e.target.value)}
-                                                                    placeholder="0123456789abcdef..."
-                                                                    className="font-mono text-xs"
-                                                                />
-                                                            </div>
-
-                                                            <Button
-                                                                onClick={() => decryptPayload()}
-                                                                disabled={isDecrypting || !sessionKey}
-                                                                size="sm"
-                                                                className="w-full"
-                                                            >
-                                                                <Unlock className="h-3 w-3 mr-2" />
-                                                                {isDecrypting ? 'Decrypting...' : 'Decrypt'}
-                                                            </Button>
-
-                                                            {decryptError && (
-                                                                <div className="bg-destructive/10 border border-destructive rounded-md p-2">
-                                                                    <p className="text-xs text-destructive">
-                                                                        {decryptError}
-                                                                    </p>
-                                                                </div>
-                                                            )}
-
-                                                            {decryptedData && (
-                                                                <div>
-                                                                    <h3 className="font-semibold mb-2">Decrypted Payload</h3>
-                                                                    <div className="bg-muted p-3 rounded-md overflow-x-auto">
-                                                                        <pre className="text-xs font-mono whitespace-pre-wrap break-all">
-                                                                            {decryptedData}
-                                                                        </pre>
-                                                                    </div>
-                                                                </div>
-                                                            )}
-
-                                                            <div className="bg-muted/50 p-2 rounded-md">
-                                                                <p className="text-xs text-muted-foreground">
-                                                                    Format: [16-byte IV] + [AES-128-CBC Encrypted Data]
-                                                                </p>
-                                                            </div>
+                                                        <div className="bg-muted p-3 rounded-md">
+                                                            <pre className="text-xs font-mono whitespace-pre-wrap break-all">
+                                                                {selectedPacket.decryptedPayload}
+                                                            </pre>
                                                         </div>
                                                     </div>
                                                 </>

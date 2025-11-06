@@ -2,143 +2,233 @@
 #include "../shared/protocol/packet_utils.h"
 #include "../shared/config/mita_config.h"
 
-// BLE Callback implementations
-MitaBLEServerCallbacks::MitaBLEServerCallbacks(BLETransport *transport) : transport(transport) {}
+// Static instance pointer for notification callback
+BLETransport* BLETransport::instance = nullptr;
 
-void MitaBLEServerCallbacks::onConnect(BLEServer *server)
+// BLE Client Callback implementations
+MitaBLEClientCallbacks::MitaBLEClientCallbacks(BLETransport *transport) : transport(transport) {}
+
+void MitaBLEClientCallbacks::onConnect(BLEClient *pClient)
 {
-    transport->onClientConnect();
+    transport->onServerConnect();
 }
 
-void MitaBLEServerCallbacks::onDisconnect(BLEServer *server)
+void MitaBLEClientCallbacks::onDisconnect(BLEClient *pClient)
 {
-    transport->onClientDisconnect();
-}
-
-MitaBLECharacteristicCallbacks::MitaBLECharacteristicCallbacks(BLETransport *transport) : transport(transport) {}
-
-void MitaBLECharacteristicCallbacks::onWrite(BLECharacteristic *characteristic)
-{
-    std::string value = characteristic->getValue();
-    if (value.length() > 0)
-    {
-        transport->onDataReceived((const uint8_t *)value.data(), value.length());
-    }
-}
-
-void MitaBLECharacteristicCallbacks::onNotify(BLECharacteristic *characteristic)
-{
-    // This gets called when notifications are sent
-}
-
-MitaBLEDescriptorCallbacks::MitaBLEDescriptorCallbacks(BLETransport *transport) : transport(transport) {}
-
-void MitaBLEDescriptorCallbacks::onWrite(BLEDescriptor *descriptor)
-{
-    uint8_t* value = descriptor->getValue();
-    if (value != nullptr)
-    {
-        // BLE2902 descriptor: 0x01 = notifications enabled, 0x00 = disabled
-        if (value[0] == 0x01)
-        {
-            transport->onNotificationsEnabled();
-        }
-        else if (value[0] == 0x00)
-        {
-            transport->onNotificationsDisabled();
-        }
-    }
+    transport->onServerDisconnect();
 }
 
 // BLETransport implementation
 BLETransport::BLETransport(const String &device_id, const String &router_id)
     : device_id(device_id), router_id(router_id),
-      server(nullptr), characteristic(nullptr),
-      ble_connected(false), client_connected(false), notifications_enabled(false),
+      client(nullptr), characteristic(nullptr), router_device(nullptr),
+      ble_connected(false), client_connected(false),
       packet_length(0), packet_available(false)
 {
+    // Set static instance for notification callback
+    instance = this;
 }
 
 BLETransport::~BLETransport()
 {
     disconnect();
+    if (instance == this) {
+        instance = nullptr;
+    }
 }
 
 bool BLETransport::connect()
 {
-    Serial.println("BLETransport: Attempting connection...");
+    Serial.println("BLETransport: Scanning for router...");
 
-    if (!setupServer())
+    if (!scanForRouter())
     {
-        Serial.println("BLETransport: Failed to setup server");
+        Serial.println("BLETransport: Router not found");
         return false;
     }
 
-    if (!startAdvertising())
+    if (!connectToRouter())
     {
-        Serial.println("BLETransport: Failed to start advertising");
+        Serial.println("BLETransport: Failed to connect to router");
         return false;
     }
 
-    Serial.println("BLETransport: Waiting for router connection...");
+    Serial.println("BLETransport: Connected to router");
+    return true;
+}
 
-    unsigned long start_time = millis();
-    while (!client_connected && (millis() - start_time) < 30000)
+bool BLETransport::scanForRouter()
+{
+    // Initialize BLE if not already done
+    if (!BLEDevice::getInitialized())
     {
-        delay(100);
+        BLEDevice::init(device_id.c_str());
     }
 
-    if (!client_connected)
+    BLEScan *pBLEScan = BLEDevice::getScan();
+    pBLEScan->setActiveScan(true);  // Active scan to get scan response
+    pBLEScan->setInterval(1349);    // Longer interval for reliable scan response (1.349s)
+    pBLEScan->setWindow(449);       // 449ms window
+
+    // Scan for 8 seconds to ensure we get scan response packets
+    Serial.println("BLETransport: Starting 8-second active scan (waiting for scan responses)...");
+    BLEScanResults results = pBLEScan->start(8, false);
+
+    Serial.printf("BLETransport: Found %d devices\n", results.getCount());
+
+    // Look for router by name OR by service UUID
+    for (int i = 0; i < results.getCount(); i++)
     {
-        Serial.println("BLETransport: Router did not connect");
+        BLEAdvertisedDevice device = results.getDevice(i);
+        String name = String(device.getName().c_str());
+        String addr = String(device.getAddress().toString().c_str());
+
+        // Check if device advertises our service UUID
+        bool has_service = false;
+        if (device.haveServiceUUID())
+        {
+            // Check if it's advertising our specific service
+            has_service = device.isAdvertisingService(BLEUUID(MITA_SERVICE_UUID));
+            
+            // Debug: print all advertised service UUIDs
+            if (!has_service && device.getServiceUUIDCount() > 0)
+            {
+                Serial.printf("  Services: ");
+                for (int j = 0; j < device.getServiceUUIDCount(); j++)
+                {
+                    Serial.printf("%s ", device.getServiceUUID(j).toString().c_str());
+                }
+                Serial.println();
+            }
+        }
+
+        Serial.printf("BLETransport:   Device %d: '%s' addr=%s (RSSI: %d) service=%d\n", 
+                     i, name.c_str(), addr.c_str(), device.getRSSI(), has_service);
+
+        // Match by service UUID (most reliable)
+        if (has_service)
+        {
+            Serial.printf("BLETransport: Found router by service UUID: %s\n", addr.c_str());
+            router_device = new BLEAdvertisedDevice(device);
+            pBLEScan->clearResults();
+            return true;
+        }
+        
+        // Also try matching by name (if available) - case insensitive
+        String name_lower = name;
+        name_lower.toLowerCase();
+        String router_lower = String(router_id);
+        router_lower.toLowerCase();
+        if (name.length() > 0 && 
+            (name_lower.indexOf("mita") >= 0 ||
+             name_lower.indexOf(router_lower) >= 0))
+        {
+            Serial.printf("BLETransport: Found router by name: %s\n", name.c_str());
+            router_device = new BLEAdvertisedDevice(device);
+            pBLEScan->clearResults();
+            return true;
+        }
+    }
+
+    pBLEScan->clearResults();
+    Serial.println("BLETransport: No matching router found");
+    return false;
+}
+
+bool BLETransport::connectToRouter()
+{
+    if (!router_device)
+    {
+        Serial.println("BLETransport: No router device to connect to");
         return false;
     }
 
-    Serial.println("BLETransport: Client connected");
+    // Create client
+    client = BLEDevice::createClient();
+    client->setClientCallbacks(new MitaBLEClientCallbacks(this));
 
-    // Wait for router to enable notifications before considering connection ready
-    Serial.println("BLETransport: Waiting for notifications to be enabled...");
-    start_time = millis();
-    while (!notifications_enabled && (millis() - start_time) < 15000)
+    // Connect to router
+    Serial.println("BLETransport: Connecting to router...");
+    if (!client->connect(router_device))
     {
-        delay(100);
+        Serial.println("BLETransport: Connection failed");
+        return false;
     }
 
-    if (!notifications_enabled)
+    Serial.println("BLETransport: Connected! Getting service...");
+
+    // Get the Mita service
+    BLERemoteService *pService = client->getService(MITA_SERVICE_UUID);
+    if (!pService)
     {
-        Serial.println("BLETransport: Router did not enable notifications");
+        Serial.println("BLETransport: Mita service not found");
+        client->disconnect();
         return false;
+    }
+
+    Serial.println("BLETransport: Service found! Getting characteristic...");
+
+    // Get the Mita characteristic
+    characteristic = pService->getCharacteristic(MITA_CHARACTERISTIC_UUID);
+    if (!characteristic)
+    {
+        Serial.println("BLETransport: Mita characteristic not found");
+        client->disconnect();
+        return false;
+    }
+
+    Serial.println("BLETransport: Characteristic found!");
+
+    // Register for notifications if supported
+    if (characteristic->canNotify())
+    {
+        Serial.println("BLETransport: Registering for notifications...");
+        characteristic->registerForNotify(notifyCallback);
+        Serial.println("BLETransport: Notifications registered");
+    }
+    else
+    {
+        Serial.println("BLETransport: Warning - characteristic does not support notifications");
     }
 
     ble_connected = true;
-    Serial.println("BLETransport: Connection successful");
+    client_connected = true;
+
+    Serial.println("BLETransport: Connection setup complete");
     return true;
 }
 
 void BLETransport::disconnect()
 {
-    if (server)
+    if (client && client->isConnected())
     {
-        server->getAdvertising()->stop();
-        BLEDevice::deinit(true);
-        server = nullptr;
-        characteristic = nullptr;
+        client->disconnect();
     }
+    
+    if (router_device)
+    {
+        delete router_device;
+        router_device = nullptr;
+    }
+    
+    client = nullptr;
+    characteristic = nullptr;
     ble_connected = false;
     client_connected = false;
-    notifications_enabled = false;
+    
     Serial.println("BLETransport: Disconnected");
 }
 
 bool BLETransport::isConnected() const
 {
-    return ble_connected && client_connected;
+    return ble_connected && client_connected && client && client->isConnected();
 }
 
 bool BLETransport::sendPacket(const BasicProtocolPacket &packet)
 {
     if (!isConnected() || !characteristic)
     {
+        Serial.println("BLETransport: Cannot send - not connected");
         return false;
     }
 
@@ -148,8 +238,8 @@ bool BLETransport::sendPacket(const BasicProtocolPacket &packet)
 
     try
     {
-        characteristic->setValue(buffer, length);
-        characteristic->notify();
+        // Write value to characteristic (without response for speed)
+        characteristic->writeValue(buffer, length, false);
         return true;
     }
     catch (...)
@@ -175,6 +265,7 @@ bool BLETransport::receivePacket(BasicProtocolPacket &packet, unsigned long time
             }
             else
             {
+                Serial.println("BLETransport: Failed to deserialize packet");
                 packet_available = false;
                 packet_length = 0;
             }
@@ -196,32 +287,20 @@ String BLETransport::getConnectionInfo() const
     {
         return "BLE: Disconnected";
     }
-    return String("BLE: Connected (") + device_id + ")";
+    return String("BLE: Connected to router (") + device_id + ")";
 }
 
-void BLETransport::onClientConnect()
+void BLETransport::onServerConnect()
 {
     client_connected = true;
-    Serial.println("BLETransport: Client connected");
+    Serial.println("BLETransport: Server connection established");
 }
 
-void BLETransport::onClientDisconnect()
+void BLETransport::onServerDisconnect()
 {
     client_connected = false;
-    notifications_enabled = false;
-    Serial.println("BLETransport: Client disconnected");
-}
-
-void BLETransport::onNotificationsEnabled()
-{
-    notifications_enabled = true;
-    Serial.println("BLETransport: Notifications enabled by router");
-}
-
-void BLETransport::onNotificationsDisabled()
-{
-    notifications_enabled = false;
-    Serial.println("BLETransport: Notifications disabled by router");
+    ble_connected = false;
+    Serial.println("BLETransport: Server disconnected");
 }
 
 void BLETransport::onDataReceived(const uint8_t *data, size_t length)
@@ -231,50 +310,20 @@ void BLETransport::onDataReceived(const uint8_t *data, size_t length)
         memcpy(packet_buffer, data, length);
         packet_length = length;
         packet_available = true;
+        Serial.printf("BLETransport: Received %d bytes\n", length);
+    }
+    else
+    {
+        Serial.printf("BLETransport: Received packet too large (%d bytes)\n", length);
     }
 }
 
-bool BLETransport::setupServer()
+// Static notification callback
+void BLETransport::notifyCallback(BLERemoteCharacteristic *pChar,
+                                   uint8_t *data, size_t length, bool isNotify)
 {
-    BLEDevice::init(device_id.c_str());
-
-    server = BLEDevice::createServer();
-    server->setCallbacks(new MitaBLEServerCallbacks(this));
-
-    BLEService *service = server->createService(MITA_SERVICE_UUID);
-
-    characteristic = service->createCharacteristic(
-        MITA_CHARACTERISTIC_UUID,
-        BLECharacteristic::PROPERTY_READ |
-            BLECharacteristic::PROPERTY_WRITE |
-            BLECharacteristic::PROPERTY_WRITE_NR |
-            BLECharacteristic::PROPERTY_NOTIFY);
-
-    characteristic->setCallbacks(new MitaBLECharacteristicCallbacks(this));
-
-    BLE2902* descriptor = new BLE2902();
-    descriptor->setCallbacks(new MitaBLEDescriptorCallbacks(this));
-    characteristic->addDescriptor(descriptor);
-
-    service->start();
-    return true;
+    if (instance)
+    {
+        instance->onDataReceived(data, length);
+    }
 }
-
-bool BLETransport::startAdvertising()
-{
-    BLEAdvertising *advertising = BLEDevice::getAdvertising();
-    advertising->addServiceUUID(MITA_SERVICE_UUID);
-
-    String ble_name = router_id + "_" + device_id;
-    esp_ble_gap_set_device_name(ble_name.c_str());
-
-    advertising->setScanResponse(true);
-    advertising->setMinPreferred(MITA_BLE_MIN_INTERVAL);
-    advertising->setMinPreferred(MITA_BLE_MAX_INTERVAL);
-
-    BLEDevice::startAdvertising();
-
-    Serial.printf("BLETransport: Advertising started with name: %s\n", ble_name.c_str());
-    return true;
-}
-

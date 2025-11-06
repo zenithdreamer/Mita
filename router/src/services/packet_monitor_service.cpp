@@ -25,13 +25,13 @@ namespace mita
             logger_->info("Packet Monitor Service shutting down");
         }
 
-        void PacketMonitorService::capture_packet(const protocol::ProtocolPacket &packet,
+        std::string PacketMonitorService::capture_packet(const protocol::ProtocolPacket &packet,
                                                   const std::string &direction,
                                                   core::TransportType transport)
         {
             if (!enabled_)
             {
-                return;
+                return "";
             }
 
             try
@@ -92,11 +92,14 @@ namespace mita
                     logger_->warning("Storage not available, packet not saved",
                                    core::LogContext().add("packet_id", captured.id));
                 }
+                
+                return captured.id;
             }
             catch (const std::exception &e)
             {
                 logger_->error("Failed to capture packet",
                              core::LogContext().add("error", e.what()));
+                return "";
             }
         }
 
@@ -128,7 +131,13 @@ namespace mita
                 captured.encrypted = false;
                 
                 // Determine error flags from reason
-                if (reason.find("Checksum") != std::string::npos || reason.find("checksum") != std::string::npos)
+                if (reason.find("GCM_AUTH_FAIL") != std::string::npos || 
+                    reason.find("GCM authentication failed") != std::string::npos)
+                {
+                    captured.error_flags = "GCM_AUTH_FAIL";
+                    captured.encrypted = true;  // Was encrypted but failed auth
+                }
+                else if (reason.find("Checksum") != std::string::npos || reason.find("checksum") != std::string::npos)
                 {
                     captured.error_flags = "CHECKSUM_FAIL";
                 }
@@ -219,6 +228,7 @@ namespace mita
                         p.raw_data = hex_to_bytes(row.raw_data);
                         p.decoded_header = row.decoded_header;
                         p.decoded_payload = row.decoded_payload;
+                        p.decrypted_payload = row.decrypted_payload;
                         p.is_valid = row.is_valid != 0;
                         p.error_flags = row.error_flags;
                         result.push_back(std::move(p));
@@ -349,6 +359,20 @@ namespace mita
                 return "CONTROL";
             case MessageType::HEARTBEAT:
                 return "HEARTBEAT";
+            case MessageType::DISCONNECT:
+                return "DISCONNECT";
+            case MessageType::DISCONNECT_ACK:
+                return "DISCONNECT_ACK";
+            case MessageType::SESSION_RESUME:
+                return "SESSION_RESUME";
+            case MessageType::SESSION_RESUME_ACK:
+                return "SESSION_RESUME_ACK";
+            case MessageType::SESSION_REKEY_REQ:
+                return "SESSION_REKEY_REQ";
+            case MessageType::SESSION_REKEY_ACK:
+                return "SESSION_REKEY_ACK";
+            case MessageType::PING:
+                return "PING";
             case MessageType::ERROR:
                 return "ERROR";
             default:
@@ -526,6 +550,70 @@ namespace mita
             return metrics;
         }
 
+        bool PacketMonitorService::update_packet_error(const std::string &packet_id,
+                                                       const std::string &error_flags,
+                                                       bool is_valid)
+        {
+            if (!storage_ || packet_id.empty()) {
+                return false;
+            }
+
+            try {
+                std::lock_guard<std::mutex> lock(db_mutex_);
+                using namespace sqlite_orm;
+
+                // Update the packet record with error information
+                storage_->update_all(
+                    set(c(&mita::db::MonitoredPacket::error_flags) = error_flags,
+                        c(&mita::db::MonitoredPacket::is_valid) = is_valid ? 1 : 0),
+                    where(c(&mita::db::MonitoredPacket::packet_id) = packet_id)
+                );
+
+                logger_->debug("Updated packet with error information",
+                             core::LogContext()
+                                .add("packet_id", packet_id)
+                                .add("error_flags", error_flags));
+                return true;
+            } catch (const std::exception &e) {
+                logger_->error("Failed to update packet error",
+                             core::LogContext()
+                                .add("packet_id", packet_id)
+                                .add("error", e.what()));
+                return false;
+            }
+        }
+
+        bool PacketMonitorService::update_packet_decrypted(const std::string &packet_id,
+                                                           const std::string &decrypted_payload)
+        {
+            if (!storage_ || packet_id.empty()) {
+                return false;
+            }
+
+            try {
+                std::lock_guard<std::mutex> lock(db_mutex_);
+                using namespace sqlite_orm;
+
+                // Update the packet record with decrypted payload
+                storage_->update_all(
+                    set(c(&mita::db::MonitoredPacket::decrypted_payload) = decrypted_payload),
+                    where(c(&mita::db::MonitoredPacket::packet_id) = packet_id)
+                );
+
+                logger_->debug("Updated packet with decrypted payload",
+                             core::LogContext()
+                                .add("packet_id", packet_id)
+                                .add("decrypted_size", decrypted_payload.size()));
+                return true;
+            } catch (const std::exception &e) {
+                logger_->error("Failed to update packet with decrypted payload",
+                             core::LogContext()
+                                .add("packet_id", packet_id)
+                                .add("error", e.what()));
+                return false;
+            }
+        }
+
         void PacketMonitorService::save_packet_to_db(const CapturedPacket &packet)
         {
             try {
@@ -550,6 +638,7 @@ namespace mita
                 db_packet.raw_data = bytes_to_hex(packet.raw_data);
                 db_packet.decoded_header = packet.decoded_header;
                 db_packet.decoded_payload = packet.decoded_payload;
+                db_packet.decrypted_payload = packet.decrypted_payload;
                 db_packet.is_valid = packet.is_valid ? 1 : 0;
                 db_packet.error_flags = packet.error_flags;
 

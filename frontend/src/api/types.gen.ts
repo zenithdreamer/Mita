@@ -76,6 +76,85 @@ export type LoginResponseDto = {
     userId?: number;
 };
 
+export type RouterStatisticsDto = {
+    /**
+     * Total packets received by router
+     */
+    totalPacketsReceived?: number;
+    /**
+     * Total packets sent by router
+     */
+    totalPacketsSent?: number;
+    /**
+     * Total bytes received
+     */
+    totalBytesReceived?: number;
+    /**
+     * Total bytes sent
+     */
+    totalBytesSent?: number;
+    /**
+     * Current packets per second throughput
+     */
+    packetsPerSecond?: number;
+    /**
+     * Number of packet sequence gaps detected (potential packet loss)
+     */
+    sequenceGapsDetected?: number;
+    /**
+     * Number of replay attacks blocked
+     */
+    replayAttemptsBlocked?: number;
+    /**
+     * Number of stale packets dropped (timestamp validation failure)
+     */
+    stalePacketsDropped?: number;
+    /**
+     * Number of successful session key rotations
+     */
+    sessionRekeysCompleted?: number;
+    /**
+     * Currently active devices
+     */
+    activeDevices?: number;
+    /**
+     * Total devices ever registered
+     */
+    totalDevicesRegistered?: number;
+    /**
+     * Total authentication failures
+     */
+    authenticationFailures?: number;
+    /**
+     * Total invalid packets received
+     */
+    invalidPacketsReceived?: number;
+    /**
+     * Total packets dropped
+     */
+    droppedPackets?: number;
+    /**
+     * Packets received via WiFi
+     */
+    wifiPacketsReceived?: number;
+    /**
+     * Packets sent via WiFi
+     */
+    wifiPacketsSent?: number;
+    /**
+     * Packets received via BLE
+     */
+    blePacketsReceived?: number;
+    /**
+     * Packets sent via BLE
+     */
+    blePacketsSent?: number;
+    /**
+     * Router uptime in seconds
+     */
+    uptimeSeconds?: number;
+};
+
 export type SettingsDto = {
     /**
      * WiFi transport enabled
@@ -111,17 +190,7 @@ export type PacketInfoDto = {
     rawData?: string;
     decodedHeader?: string;
     decodedPayload?: string;
-};
-
-export type StatusDto = {
-    status: string;
-    message: string;
-    uptime: number;
-};
-
-export type PacketListDto = {
-    packets?: Array<PacketInfoDto>;
-    total?: number;
+    decryptedPayload?: string;
 };
 
 export type RoutingDeviceDto = {
@@ -134,6 +203,17 @@ export type RoutingDeviceDto = {
 
 export type ProtocolStatsDto = {
     protocols?: Array<ProtocolStatDto>;
+};
+
+export type StatusDto = {
+    status: string;
+    message: string;
+    uptime: number;
+};
+
+export type PacketListDto = {
+    packets?: Array<PacketInfoDto>;
+    total?: number;
 };
 
 export type ErrorDto = {
@@ -173,8 +253,12 @@ export type SystemResourcesDto = {
     storageTotal?: number;
 };
 
-export type ProtocolListDto = {
-    protocols?: Array<ProtocolInfoDto>;
+export type ProtocolInfoDto = {
+    name?: string;
+    status?: string;
+    connectedDevices?: number;
+    description?: string;
+    enabled?: boolean;
 };
 
 export type NetworkStatsDto = {
@@ -186,12 +270,8 @@ export type NetworkStatsDto = {
     bytesDownloaded?: number;
 };
 
-export type ProtocolInfoDto = {
-    name?: string;
-    status?: string;
-    connectedDevices?: number;
-    description?: string;
-    enabled?: boolean;
+export type ProtocolListDto = {
+    protocols?: Array<ProtocolInfoDto>;
 };
 
 export type OptionsData = {
@@ -289,6 +369,31 @@ export type StatusOptionsResponses = {
 };
 
 export type StatusOptionsResponse = StatusOptionsResponses[keyof StatusOptionsResponses];
+
+export type GetStatisticsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/statistics';
+};
+
+export type GetStatisticsErrors = {
+    /**
+     * Internal Server Error
+     */
+    500: ErrorDto;
+};
+
+export type GetStatisticsError = GetStatisticsErrors[keyof GetStatisticsErrors];
+
+export type GetStatisticsResponses = {
+    /**
+     * OK
+     */
+    200: RouterStatisticsDto;
+};
+
+export type GetStatisticsResponse = GetStatisticsResponses[keyof GetStatisticsResponses];
 
 export type ClearPacketsData = {
     body?: never;

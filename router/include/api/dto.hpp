@@ -67,6 +67,7 @@ class PacketInfoDto : public oatpp::DTO {
   // Decoded packet info
   DTO_FIELD(String, decodedHeader);
   DTO_FIELD(String, decodedPayload);
+  DTO_FIELD(String, decryptedPayload) = ""; // Decrypted payload (if encrypted)
 };
 
 class PacketListDto : public oatpp::DTO {
@@ -325,6 +326,112 @@ class ProtocolStatsDto : public oatpp::DTO {
   DTO_INIT(ProtocolStatsDto, DTO)
 
   DTO_FIELD(Vector<Object<ProtocolStatDto>>, protocols);
+};
+
+// Router Statistics DTO - comprehensive security and operational metrics
+class RouterStatisticsDto : public oatpp::DTO {
+  DTO_INIT(RouterStatisticsDto, DTO)
+
+  // Basic operational metrics
+  DTO_FIELD_INFO(totalPacketsReceived) {
+    info->description = "Total packets received by router";
+  }
+  DTO_FIELD(Int64, totalPacketsReceived);
+
+  DTO_FIELD_INFO(totalPacketsSent) {
+    info->description = "Total packets sent by router";
+  }
+  DTO_FIELD(Int64, totalPacketsSent);
+
+  DTO_FIELD_INFO(totalBytesReceived) {
+    info->description = "Total bytes received";
+  }
+  DTO_FIELD(Int64, totalBytesReceived);
+
+  DTO_FIELD_INFO(totalBytesSent) {
+    info->description = "Total bytes sent";
+  }
+  DTO_FIELD(Int64, totalBytesSent);
+
+  DTO_FIELD_INFO(packetsPerSecond) {
+    info->description = "Current packets per second throughput";
+  }
+  DTO_FIELD(Float64, packetsPerSecond);
+
+  // Security metrics - NEW
+  DTO_FIELD_INFO(sequenceGapsDetected) {
+    info->description = "Number of packet sequence gaps detected (potential packet loss)";
+  }
+  DTO_FIELD(Int64, sequenceGapsDetected);
+
+  DTO_FIELD_INFO(replayAttemptsBlocked) {
+    info->description = "Number of replay attacks blocked";
+  }
+  DTO_FIELD(Int64, replayAttemptsBlocked);
+
+  DTO_FIELD_INFO(stalePacketsDropped) {
+    info->description = "Number of stale packets dropped (timestamp validation failure)";
+  }
+  DTO_FIELD(Int64, stalePacketsDropped);
+
+  DTO_FIELD_INFO(sessionRekeysCompleted) {
+    info->description = "Number of successful session key rotations";
+  }
+  DTO_FIELD(Int64, sessionRekeysCompleted);
+
+  // Device statistics
+  DTO_FIELD_INFO(activeDevices) {
+    info->description = "Currently active devices";
+  }
+  DTO_FIELD(Int32, activeDevices);
+
+  DTO_FIELD_INFO(totalDevicesRegistered) {
+    info->description = "Total devices ever registered";
+  }
+  DTO_FIELD(Int32, totalDevicesRegistered);
+
+  // Error statistics
+  DTO_FIELD_INFO(authenticationFailures) {
+    info->description = "Total authentication failures";
+  }
+  DTO_FIELD(Int64, authenticationFailures);
+
+  DTO_FIELD_INFO(invalidPacketsReceived) {
+    info->description = "Total invalid packets received";
+  }
+  DTO_FIELD(Int64, invalidPacketsReceived);
+
+  DTO_FIELD_INFO(droppedPackets) {
+    info->description = "Total packets dropped";
+  }
+  DTO_FIELD(Int64, droppedPackets);
+
+  // Transport-specific stats
+  DTO_FIELD_INFO(wifiPacketsReceived) {
+    info->description = "Packets received via WiFi";
+  }
+  DTO_FIELD(Int64, wifiPacketsReceived);
+
+  DTO_FIELD_INFO(wifiPacketsSent) {
+    info->description = "Packets sent via WiFi";
+  }
+  DTO_FIELD(Int64, wifiPacketsSent);
+
+  DTO_FIELD_INFO(blePacketsReceived) {
+    info->description = "Packets received via BLE";
+  }
+  DTO_FIELD(Int64, blePacketsReceived);
+
+  DTO_FIELD_INFO(blePacketsSent) {
+    info->description = "Packets sent via BLE";
+  }
+  DTO_FIELD(Int64, blePacketsSent);
+
+  // Uptime
+  DTO_FIELD_INFO(uptimeSeconds) {
+    info->description = "Router uptime in seconds";
+  }
+  DTO_FIELD(Int64, uptimeSeconds);
 };
 
 #include OATPP_CODEGEN_END(DTO)

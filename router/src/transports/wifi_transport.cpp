@@ -306,7 +306,16 @@ namespace mita
             {
                 logger_->error("Exception handling new client",
                                core::LogContext().add("device_id", device_id).add("error", e.what()));
-                close(client_socket);
+                // Don't close the socket here - handler destructor will handle it if handler was created
+                // If handler creation failed, socket needs to be closed
+                {
+                    std::lock_guard<std::mutex> lock(clients_mutex_);
+                    if (client_handlers_.find(device_id) == client_handlers_.end()) {
+                        // Handler was never added to map, close socket manually
+                        close(client_socket);
+                    }
+                    // Otherwise handler destructor will close it
+                }
                 statistics_service_.record_transport_error("wifi");
             }
         }

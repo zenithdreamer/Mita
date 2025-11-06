@@ -57,12 +57,6 @@ public:
     info->addTag("Status");
   }
   ENDPOINT("GET", "/api/status", getStatus, REQUEST(std::shared_ptr<IncomingRequest>, request)) {
-    printf("[API] GET /api/status - request received from %s\n",
-           request->getHeader("User-Agent")->c_str());
-    printf("[API] Connection header from client: %s\n",
-           request->getHeader("Connection") ? request->getHeader("Connection")->c_str() : "none");
-    fflush(stdout);
-
     auto dto = StatusDto::createShared();
     dto->status = "running";
     dto->message = "Router is operational";
@@ -88,9 +82,6 @@ public:
     info->addTag("Status");
   }
   ENDPOINT("GET", "/api/status/devices", getDeviceStatus) {
-    printf("[API] GET /api/status/devices - request received\n");
-    fflush(stdout);
-
     auto dto = DashboardStatsDto::createShared();
     dto->status = "running";
 
@@ -134,9 +125,6 @@ public:
     info->addTag("Status");
   }
   ENDPOINT("GET", "/api/status/system", getSystemStatus) {
-    printf("[API] GET /api/status/system - request received\n");
-    fflush(stdout);
-
     auto dto = SystemResourcesDto::createShared();
 
     // Read memory info from /proc/meminfo (Linux)
@@ -207,9 +195,6 @@ public:
     info->addTag("Status");
   }
   ENDPOINT("GET", "/api/status/network", getNetworkStatus) {
-    printf("[API] GET /api/status/network - request received\n");
-    fflush(stdout);
-
     auto dto = NetworkStatsDto::createShared();
 
     if (m_packetMonitor) {

@@ -2,8 +2,10 @@
 #define BLE_TRANSPORT_H
 
 #include <BLEDevice.h>
-#include <BLEServer.h>
+#include <BLEClient.h>
 #include <BLEUtils.h>
+#include <BLEScan.h>
+#include <BLEAdvertisedDevice.h>
 #include <BLE2902.h>
 #include "../../shared/protocol/transport_interface.h"
 #include "../../shared/protocol/protocol_types.h"
@@ -12,53 +14,40 @@
 // Forward declarations
 class BLETransport;
 
-class MitaBLEServerCallbacks : public BLEServerCallbacks {
+// BLE Client Callbacks - handle connection/disconnection events
+class MitaBLEClientCallbacks : public BLEClientCallbacks {
 private:
     BLETransport* transport;
 
 public:
-    MitaBLEServerCallbacks(BLETransport* transport);
-    void onConnect(BLEServer* server) override;
-    void onDisconnect(BLEServer* server) override;
+    MitaBLEClientCallbacks(BLETransport* transport);
+    void onConnect(BLEClient* pClient) override;
+    void onDisconnect(BLEClient* pClient) override;
 };
 
-class MitaBLECharacteristicCallbacks : public BLECharacteristicCallbacks {
-private:
-    BLETransport* transport;
-
-public:
-    MitaBLECharacteristicCallbacks(BLETransport* transport);
-    void onWrite(BLECharacteristic* characteristic) override;
-    void onNotify(BLECharacteristic* characteristic) override;
-};
-
-class MitaBLEDescriptorCallbacks : public BLEDescriptorCallbacks {
-private:
-    BLETransport* transport;
-
-public:
-    MitaBLEDescriptorCallbacks(BLETransport* transport);
-    void onWrite(BLEDescriptor* descriptor) override;
-};
-
+// BLE Transport - Client Mode (connects TO router)
 class BLETransport : public ITransport {
 private:
-    BLEServer* server;
-    BLECharacteristic* characteristic;
+    BLEClient* client;
+    BLERemoteCharacteristic* characteristic;
+    BLEAdvertisedDevice* router_device;
     String device_id;
     String router_id;
 
     bool ble_connected;
     bool client_connected;
-    bool notifications_enabled;
 
     // Packet buffering
     uint8_t packet_buffer[HEADER_SIZE + MAX_PAYLOAD_SIZE];
     size_t packet_length;
     bool packet_available;
 
-    bool setupServer();
-    bool startAdvertising();
+    // Client mode methods
+    bool scanForRouter();
+    bool connectToRouter();
+
+    // Static instance pointer for notification callback
+    static BLETransport* instance;
 
 public:
     BLETransport(const String& device_id, const String& router_id);
@@ -75,13 +64,12 @@ public:
     String getConnectionInfo() const override;
 
     // BLE callback handlers
-    void onClientConnect();
-    void onClientDisconnect();
+    void onServerConnect();
+    void onServerDisconnect();
     void onDataReceived(const uint8_t* data, size_t length);
-    void onNotificationsEnabled();
-    void onNotificationsDisabled();
 
-    // BLE-specific methods
+    // Static notification callback for BLE characteristic
+    static void notifyCallback(BLERemoteCharacteristic* pChar, uint8_t* data, size_t length, bool isNotify);
 };
 
 #endif // BLE_TRANSPORT_H

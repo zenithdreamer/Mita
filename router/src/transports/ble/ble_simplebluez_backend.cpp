@@ -365,6 +365,39 @@ namespace mita
                     return std::nullopt;
                 }
 
+                // Peripheral mode methods (not supported by SimpleBLE - stubs only)
+                bool start_advertising(const std::string &device_name) override 
+                { 
+                    if (logger_)
+                        logger_->warning("SimpleBLE does not support peripheral mode - advertising not available");
+                    return false; 
+                }
+                
+                void stop_advertising() override {}
+                
+                bool register_gatt_service(
+                    const std::string &service_uuid,
+                    const std::string &char_uuid,
+                    std::function<void(const std::string &, const std::vector<uint8_t> &)> on_write,
+                    std::function<std::vector<uint8_t>(const std::string &)> on_read) override 
+                { 
+                    return false; 
+                }
+                
+                bool notify_characteristic(
+                    const std::string &client_address,
+                    const std::string &service_uuid,
+                    const std::string &char_uuid,
+                    const std::vector<uint8_t> &data) override 
+                { 
+                    return false; 
+                }
+                
+                std::vector<std::string> get_connected_clients() override 
+                { 
+                    return {}; 
+                }
+
                 const core::RouterConfig &config_;
                 SimpleBLE::Adapter adapter_;
                 std::unordered_map<std::string, SimpleBLE::Peripheral> peripherals_;

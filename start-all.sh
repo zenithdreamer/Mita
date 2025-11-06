@@ -12,6 +12,14 @@ NC='\033[0m'
 echo -e "${GREEN}=== Mita Router Full Stack Startup ===${NC}"
 echo ""
 
+# Check if port 8000 is already in use
+if lsof -Pi :8000 -sTCP:LISTEN -t >/dev/null 2>&1; then
+    echo -e "${RED}Port 8000 is already in use!${NC}"
+    echo -e "${YELLOW}Killing existing processes on port 8000...${NC}"
+    lsof -t -i :8000 | xargs -r kill -9 2>/dev/null || true
+    sleep 1
+fi
+
 # Check and install system dependencies
 echo -e "${YELLOW}Checking system dependencies...${NC}"
 REQUIRED_PACKAGES="build-essential cmake pkg-config libdbus-1-dev libnm-dev nlohmann-json3-dev libssl-dev libsqlite3-dev"
@@ -80,33 +88,29 @@ cleanup() {
     echo ""
     echo -e "${YELLOW}Stopping all services...${NC}"
 
-    # Determine if we need sudo for killing processes
-    USE_SUDO=""
-    if [ "$EUID" -eq 0 ]; then
-        USE_SUDO=""  # Already root
-    else
-        USE_SUDO="sudo"
-    fi
-
     # Kill frontend
     if [ -n "$FRONTEND_PID" ]; then
-        $USE_SUDO kill $FRONTEND_PID 2>/dev/null
-        $USE_SUDO pkill -P $FRONTEND_PID 2>/dev/null  # Kill child processes
+        kill $FRONTEND_PID 2>/dev/null || true
+        pkill -P $FRONTEND_PID 2>/dev/null || true
     fi
 
     # Kill backend
     if [ -n "$BACKEND_PID" ]; then
-        $USE_SUDO kill $BACKEND_PID 2>/dev/null
-        $USE_SUDO pkill -P $BACKEND_PID 2>/dev/null  # Kill child processes
+        kill $BACKEND_PID 2>/dev/null || true
+        pkill -P $BACKEND_PID 2>/dev/null || true
     fi
 
-    # # Cleanup any remaining vite/pnpm processes (force kill with sudo if needed)
-    # $USE_SUDO pkill -9 -f "vite" 2>/dev/null
-    # $USE_SUDO pkill -9 -f "pnpm dev" 2>/dev/null
-    # $USE_SUDO pkill -9 -f "esbuild" 2>/dev/null
-
-    # # Kill any mita_router processes
-    # $USE_SUDO pkill -f "mita_router" 2>/dev/null
+    # Cleanup any remaining processes
+    pkill -9 -f "vite" 2>/dev/null || true
+    pkill -9 -f "pnpm dev" 2>/dev/null || true
+    pkill -9 -f "esbuild" 2>/dev/null || true
+    
+    # Kill any mita_router processes on port 8000
+    ROUTER_PIDS=$(lsof -t -i :8000 2>/dev/null || true)
+    if [ -n "$ROUTER_PIDS" ]; then
+        echo -e "${YELLOW}Killing processes on port 8000...${NC}"
+        kill -9 $ROUTER_PIDS 2>/dev/null || true
+    fi
 
     echo -e "${GREEN}All services stopped${NC}"
     exit 0

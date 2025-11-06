@@ -100,6 +100,11 @@ public:
 
     ~AuthService() = default;
 
+    // Get shared storage instance
+    std::shared_ptr<db::Storage> getStorage() const {
+        return storage_;
+    }
+
     // Authenticate user and create session
     struct AuthResult {
         bool success;

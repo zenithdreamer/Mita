@@ -166,9 +166,6 @@ public:
   ENDPOINT("GET", "/api/auth/me", getCurrentUser,
            REQUEST(std::shared_ptr<IncomingRequest>, request)) {
 
-    printf("[AUTH] GET /api/auth/me - get current user request\n");
-    fflush(stdout);
-
     // Get session token from cookies
     std::string sessionToken = getSessionTokenFromCookies(request);
 

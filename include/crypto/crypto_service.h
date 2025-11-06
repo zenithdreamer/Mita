@@ -13,6 +13,10 @@ class CryptoService
 private:
     uint8_t session_key[SESSION_KEY_SIZE];
     bool session_key_valid;
+    
+    // Counter-based IV to prevent IV reuse
+    uint64_t iv_counter;
+    uint32_t session_salt;  // Random salt generated once per session
 
     // Helper for key derivation
     bool deriveSubkey(const uint8_t *key, size_t key_len, const char *info, uint8_t *output);
@@ -29,8 +33,14 @@ public:
                      const uint8_t *data, size_t data_len,
                      uint8_t *hmac);
 
+    // Per-device PSK derivation (matches router implementation)
+    // Derives: Device_PSK = HMAC-SHA256(master_secret, "DEVICE_PSK" || device_id)
+    static bool deriveDevicePSK(const String &master_secret, const String &device_id, 
+                               uint8_t *device_psk_out);
+
     // Session key management
     bool deriveSessionKey(const String &shared_secret, const uint8_t *nonce1, const uint8_t *nonce2);
+    bool rekeySession(const uint8_t *nonce3, const uint8_t *nonce4);  // Rekey from old session key
     bool hasValidSessionKey() const;
     void clearSessionKey();
     void getSessionKey(uint8_t *key_out) const;  // Get copy of session key for logging

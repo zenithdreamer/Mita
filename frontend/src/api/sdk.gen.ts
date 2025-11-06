@@ -2,7 +2,7 @@
 
 import type { Client, Options as Options2, TDataShape } from './client';
 import { client } from './client.gen';
-import type { AddRouteData, AddRouteErrors, AddRouteResponses, ClearPacketsData, ClearPacketsResponses, DeleteRouteData, DeleteRouteErrors, DeleteRouteResponses, DiscoverDevicesData, DiscoverDevicesErrors, DiscoverDevicesResponses, GetBleDevicesData, GetBleDevicesErrors, GetBleDevicesResponses, GetCurrentUserData, GetCurrentUserErrors, GetCurrentUserResponses, GetDeviceData, GetDeviceErrors, GetDeviceResponses, GetDeviceStatusData, GetDeviceStatusResponses, GetNetworkStatusData, GetNetworkStatusResponses, GetPacketsData, GetPacketsResponses, GetProtocolsData, GetProtocolsResponses, GetProtocolStatsData, GetProtocolStatsErrors, GetProtocolStatsResponses, GetRoutingTableData, GetRoutingTableErrors, GetRoutingTableResponses, GetSettingsData, GetSettingsResponses, GetStatusData, GetStatusResponses, GetSystemStatusData, GetSystemStatusResponses, GetWifiDevicesData, GetWifiDevicesErrors, GetWifiDevicesResponses, LoginData, LoginErrors, LoginResponses, LogoutData, LogoutResponses, OptionsData, OptionsResponses, PacketsOptionsData, PacketsOptionsResponses, StatusOptionsData, StatusOptionsResponses, UpdateSettingsData, UpdateSettingsErrors, UpdateSettingsResponses } from './types.gen';
+import type { AddRouteData, AddRouteErrors, AddRouteResponses, ClearPacketsData, ClearPacketsResponses, DeleteRouteData, DeleteRouteErrors, DeleteRouteResponses, DiscoverDevicesData, DiscoverDevicesErrors, DiscoverDevicesResponses, GetBleDevicesData, GetBleDevicesErrors, GetBleDevicesResponses, GetCurrentUserData, GetCurrentUserErrors, GetCurrentUserResponses, GetDeviceData, GetDeviceErrors, GetDeviceResponses, GetDeviceStatusData, GetDeviceStatusResponses, GetNetworkStatusData, GetNetworkStatusResponses, GetPacketsData, GetPacketsResponses, GetProtocolsData, GetProtocolsResponses, GetProtocolStatsData, GetProtocolStatsErrors, GetProtocolStatsResponses, GetRoutingTableData, GetRoutingTableErrors, GetRoutingTableResponses, GetSettingsData, GetSettingsResponses, GetStatisticsData, GetStatisticsErrors, GetStatisticsResponses, GetStatusData, GetStatusResponses, GetSystemStatusData, GetSystemStatusResponses, GetWifiDevicesData, GetWifiDevicesErrors, GetWifiDevicesResponses, LoginData, LoginErrors, LoginResponses, LogoutData, LogoutResponses, OptionsData, OptionsResponses, PacketsOptionsData, PacketsOptionsResponses, StatusOptionsData, StatusOptionsResponses, UpdateSettingsData, UpdateSettingsErrors, UpdateSettingsResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean> = Options2<TData, ThrowOnError> & {
     /**
@@ -81,6 +81,16 @@ export const getNetworkStatus = <ThrowOnError extends boolean = false>(options?:
 export const statusOptions = <ThrowOnError extends boolean = false>(options?: Options<StatusOptionsData, ThrowOnError>) => {
     return (options?.client ?? client).options<StatusOptionsResponses, unknown, ThrowOnError>({
         url: '/api/status*',
+        ...options
+    });
+};
+
+/**
+ * Get comprehensive router statistics including security metrics
+ */
+export const getStatistics = <ThrowOnError extends boolean = false>(options?: Options<GetStatisticsData, ThrowOnError>) => {
+    return (options?.client ?? client).get<GetStatisticsResponses, GetStatisticsErrors, ThrowOnError>({
+        url: '/api/statistics',
         ...options
     });
 };

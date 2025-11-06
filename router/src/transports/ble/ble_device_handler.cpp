@@ -200,11 +200,10 @@ namespace mita
                                       .add("dest_addr", parsed_packet->get_dest_addr())
                                       .add("encrypted", parsed_packet->is_encrypted()));
 
-                    // Capture inbound packet
-                    if (packet_monitor_)
-                    {
-                        packet_monitor_->capture_packet(*parsed_packet, "inbound", core::TransportType::BLE);
-                    }
+                    // NOTE: Do not capture DATA here to avoid duplicate captures.
+                    // DeviceManagementService is responsible for capturing DATA packets
+                    // after validation/decryption so we only capture handshake packets
+                    // at the transport level (handled in handle_handshake_packet).
 
 
                     if (parsed_packet->get_message_type() == MessageType::HELLO ||
@@ -217,6 +216,14 @@ namespace mita
                     else if (parsed_packet->get_message_type() == MessageType::DATA)
                     {
                         handle_data_packet(*parsed_packet);
+                    }
+                    else if (parsed_packet->get_message_type() == MessageType::HEARTBEAT ||
+                             parsed_packet->get_message_type() == MessageType::DISCONNECT ||
+                             parsed_packet->get_message_type() == MessageType::CONTROL ||
+                             parsed_packet->get_message_type() == MessageType::SESSION_REKEY_REQ)
+                    {
+                        // Forward control, disconnect, and rekey messages to device management service with BLE MAC fingerprint
+                        device_management_.handle_packet(device_id_, *parsed_packet, core::TransportType::BLE, device_address_);
                     }
                     else
                     {
@@ -246,6 +253,11 @@ namespace mita
 
                     if (packet.get_message_type() == MessageType::HELLO)
                     {
+                        // Capture inbound HELLO for packet monitoring (handled here only)
+                        if (packet_monitor_)
+                        {
+                            packet_monitor_->capture_packet(packet, "inbound", core::TransportType::BLE);
+                        }
                         // Parse HELLO packet
                         std::string router_id, device_id;
                         std::vector<uint8_t> nonce;
@@ -276,6 +288,14 @@ namespace mita
 
                             // Create and send CHALLENGE
                             auto challenge_packet = handshake_manager_->create_challenge_packet(device_id_, nonce);
+                            if (!challenge_packet)
+                            {
+                                logger_->warning("Rejected HELLO from BLE device - nonce reuse or security check failed",
+                                               core::LogContext{}.add("device_id", device_id_));
+                                disconnect();  // Close BLE connection
+                                return;
+                            }
+                            
                             send_packet(*challenge_packet);
 
                             logger_->info("Sent CHALLENGE to BLE device",
@@ -284,6 +304,11 @@ namespace mita
                     }
                     else if (packet.get_message_type() == MessageType::AUTH)
                     {
+                        // Capture inbound AUTH for packet monitoring (handled here only)
+                        if (packet_monitor_)
+                        {
+                            packet_monitor_->capture_packet(packet, "inbound", core::TransportType::BLE);
+                        }
                         logger_->info("Received AUTH from BLE device",
                                      core::LogContext{}.add("device_id", device_id_));
 
@@ -326,6 +351,9 @@ namespace mita
                             // Remove handshake state as it's no longer needed
                             handshake_manager_->remove_handshake(device_id_);
 
+                            // Set transport fingerprint (BLE MAC address) before authentication
+                            device_management_.set_transport_fingerprint(device_id_, device_address_);
+
                             // Authenticate device in management service
                             if (session_crypto_)
                             {
@@ -347,7 +375,8 @@ namespace mita
                             logger_->info("BLE device authenticated",
                                          core::LogContext{}
                                              .add("device_id", device_id_)
-                                             .add("address", "0x" + std::to_string(assigned_address_)));
+                                             .add("address", "0x" + std::to_string(assigned_address_))
+                                             .add("fingerprint", device_address_));
                         }
                         else
                         {
@@ -398,8 +427,8 @@ namespace mita
                         }
                     }
 
-                    // forward to device management for processing
-                    device_management_.handle_packet(device_id_, data_packet, core::TransportType::BLE);
+                    // forward to device management for processing with BLE MAC fingerprint
+                    device_management_.handle_packet(device_id_, data_packet, core::TransportType::BLE, device_address_);
                 }
                 catch (const std::exception &e)
                 {

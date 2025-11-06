@@ -303,11 +303,9 @@ namespace mita
 
         void RouterConfig::apply_router_id_defaults()
         {
-            // Update BLE device name with router ID if it's the default
-            if (ble.device_name == "Mita_Router")
-            {
-                ble.device_name = router_id + "_Router";
-            }
+            // Note: Device name is now explicitly set in config file
+            // No automatic router_id concatenation to maintain predictable discovery
+            // If you need unique names per router, set them explicitly in router_config.json
         }
 
     } // namespace core

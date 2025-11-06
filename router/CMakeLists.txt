@@ -188,7 +188,7 @@ target_include_directories(mita_router PRIVATE ${DBUS_INCLUDE_DIRS} ${NM_INCLUDE
 target_compile_definitions(mita_router PRIVATE ENABLE_WIFI)
 
 # BLE-specific libraries
-target_link_libraries(mita_router simpleble)
+target_link_libraries(mita_router simpleble bluetooth)
 
 target_compile_definitions(mita_router PRIVATE ENABLE_BLE USE_SIMPLEBLUEZ)
 

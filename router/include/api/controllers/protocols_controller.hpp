@@ -47,9 +47,6 @@ public:
         info->addTag("Protocols");
     }
     ENDPOINT("GET", "/api/protocols", getProtocols) {
-        printf("[API] GET /api/protocols - request received\n");
-        fflush(stdout);
-
         auto dto = ProtocolListDto::createShared();
         dto->protocols = oatpp::Vector<oatpp::Object<ProtocolInfoDto>>::createShared();
 

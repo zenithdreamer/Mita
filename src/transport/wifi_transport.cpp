@@ -73,17 +73,30 @@ bool WiFiTransport::sendPacket(const BasicProtocolPacket &packet)
 
 bool WiFiTransport::receivePacket(BasicProtocolPacket &packet, unsigned long timeout_ms)
 {
-    if (!isConnected())
+    // Don't check isConnected() here - we might be waiting for a response
+    // after just sending a packet, and client.connected() can be unreliable
+    // immediately after a send operation
+    
+    if (!client)
     {
+        Serial.println("WiFiTransport: receivePacket called with no client");
         return false;
     }
 
     unsigned long start_time = millis();
     uint8_t buffer[HEADER_SIZE + MAX_PAYLOAD_SIZE];
     size_t received = 0;
+    bool had_data = false;
 
     while (millis() - start_time < timeout_ms)
     {
+        int available = client.available();
+        if (available > 0 && !had_data)
+        {
+            had_data = true;
+            Serial.printf("WiFiTransport: %d bytes available on socket\n", available);
+        }
+        
         while (client.available() && received < sizeof(buffer))
         {
             buffer[received++] = client.read();
@@ -97,7 +110,12 @@ bool WiFiTransport::receivePacket(BasicProtocolPacket &packet, unsigned long tim
                 }
             }
         }
-        delay(1);
+        
+        // Only delay if no data available to avoid unnecessary waiting
+        if (!client.available())
+        {
+            delay(1);
+        }
     }
 
     return false;

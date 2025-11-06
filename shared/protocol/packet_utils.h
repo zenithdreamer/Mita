@@ -3,57 +3,54 @@
 
 #include "protocol_types.h"
 #include <string.h>
+#include <vector>
 
 class PacketUtils {
 public:
     
-    // Compute checksum from serialized buffer (avoiding struct padding issues)
-    // Uses simple sum algorithm matching the router implementation
-    static uint8_t computeChecksumFromBuffer(const uint8_t* buffer, size_t length) {
-        uint32_t sum = 0;
+    // NOTE: CRC-16 is for basic transport-level integrity checking only
+    // This is NOT cryptographically secure and should not be relied upon for security
+    // Use AES-GCM authentication tags for cryptographic integrity protection
+    
+    // CRC-16-CCITT polynomial: 0x1021
+    // Used for better error detection than simple checksum
+    static uint16_t computeCRC16(const uint8_t* data, size_t length) {
+        uint16_t crc = 0xFFFF;  // Initial value
         
-        // Bytes 0-6 (before checksum)
-        for (int i = 0; i < 7; i++) {
-            sum += buffer[i];
+        for (size_t i = 0; i < length; i++) {
+            crc ^= (uint16_t)data[i] << 8;
+            for (uint8_t j = 0; j < 8; j++) {
+                if (crc & 0x8000) {
+                    crc = (crc << 1) ^ 0x1021;  // Polynomial
+                } else {
+                    crc = crc << 1;
+                }
+            }
         }
         
-        // Skip byte 7 (checksum field)
-        
-        // Bytes 8 to end (after checksum: rest of header + payload)
-        for (size_t i = 8; i < length; i++) {
-            sum += buffer[i];
-        }
-        
-        // Return 8-bit checksum (sum of all bytes modulo 256, then one's complement)
-        return static_cast<uint8_t>(~sum);
+        return crc;
     }
     
-    // Legacy function kept for compatibility (but should not be used due to struct padding)
-    static uint8_t computeChecksum(const BasicProtocolPacket& packet) {
-        uint32_t sum = 0;
+    // Compute CRC-16 checksum from serialized buffer (avoiding struct padding issues)
+    static uint16_t computeChecksumFromBuffer(const uint8_t* buffer, size_t length) {
+        if (length < 8) return 0;
         
-        // Process header fields (excluding checksum byte itself)
-        const uint8_t* bytes = reinterpret_cast<const uint8_t*>(&packet);
+        // Create temporary buffer without checksum field for CRC calculation
+        // Copy bytes 0-6 (before checksum at bytes 7-8) and bytes 9 onwards
+        std::vector<uint8_t> temp_buffer;
+        temp_buffer.reserve(length - 2);
         
         // Bytes 0-6 (before checksum)
-        for (int i = 0; i < 7; i++) {
-            sum += bytes[i];
+        temp_buffer.insert(temp_buffer.end(), buffer, buffer + 7);
+        
+        // Skip bytes 7-8 (checksum field)
+        
+        // Bytes 9 to end (after checksum: rest of header + payload)
+        if (length > 9) {
+            temp_buffer.insert(temp_buffer.end(), buffer + 9, buffer + length);
         }
         
-        // Skip byte 7 (checksum field)
-        
-        // Bytes 8-15 (after checksum, before payload)
-        for (int i = 8; i < 16; i++) {
-            sum += bytes[i];
-        }
-        
-        // Payload bytes
-        for (uint8_t i = 0; i < packet.payload_length; i++) {
-            sum += packet.payload[i];
-        }
-        
-        // Return 8-bit checksum (sum of all bytes modulo 256, then one's complement)
-        return static_cast<uint8_t>(~sum);
+        return computeCRC16(temp_buffer.data(), temp_buffer.size());
     }
 
     static void serializePacket(const BasicProtocolPacket& packet, uint8_t* buffer, size_t& length) {
@@ -64,15 +61,18 @@ public:
         buffer[4] = (packet.dest_addr >> 8) & 0xFF;
         buffer[5] = packet.dest_addr & 0xFF;
         buffer[6] = packet.payload_length;
-        buffer[7] = 0;  // Placeholder for checksum
-        buffer[8] = (packet.sequence_number >> 8) & 0xFF;
-        buffer[9] = packet.sequence_number & 0xFF;
-        buffer[10] = packet.ttl;
-        buffer[11] = packet.priority_flags;
-        buffer[12] = (packet.fragment_id >> 8) & 0xFF;
-        buffer[13] = packet.fragment_id & 0xFF;
-        buffer[14] = (packet.timestamp >> 8) & 0xFF;
-        buffer[15] = packet.timestamp & 0xFF;
+        buffer[7] = 0;  // Placeholder for checksum (high byte)
+        buffer[8] = 0;  // Placeholder for checksum (low byte)
+        buffer[9] = (packet.sequence_number >> 8) & 0xFF;
+        buffer[10] = packet.sequence_number & 0xFF;
+        buffer[11] = packet.ttl;
+        buffer[12] = packet.priority_flags;
+        buffer[13] = (packet.fragment_id >> 8) & 0xFF;
+        buffer[14] = packet.fragment_id & 0xFF;
+        buffer[15] = (packet.timestamp >> 24) & 0xFF;  // 32-bit timestamp
+        buffer[16] = (packet.timestamp >> 16) & 0xFF;
+        buffer[17] = (packet.timestamp >> 8) & 0xFF;
+        buffer[18] = packet.timestamp & 0xFF;
 
         if (packet.payload_length > 0) {
             memcpy(buffer + HEADER_SIZE, packet.payload, packet.payload_length);
@@ -80,8 +80,10 @@ public:
 
         length = HEADER_SIZE + packet.payload_length;
         
-        // Compute checksum from serialized buffer
-        buffer[7] = computeChecksumFromBuffer(buffer, length);
+        // Compute CRC-16 checksum from serialized buffer
+        uint16_t crc = computeChecksumFromBuffer(buffer, length);
+        buffer[7] = (crc >> 8) & 0xFF;  // High byte
+        buffer[8] = crc & 0xFF;         // Low byte
     }
 
     static bool deserializePacket(const uint8_t* buffer, size_t length, BasicProtocolPacket& packet) {
@@ -94,13 +96,14 @@ public:
         packet.source_addr = (buffer[2] << 8) | buffer[3];
         packet.dest_addr = (buffer[4] << 8) | buffer[5];
         packet.payload_length = buffer[6];
-        uint8_t received_checksum = buffer[7];
+        uint16_t received_checksum = (buffer[7] << 8) | buffer[8];  // 16-bit checksum
 
-        packet.sequence_number = (buffer[8] << 8) | buffer[9];
-        packet.ttl = buffer[10];
-        packet.priority_flags = buffer[11];
-        packet.fragment_id = (buffer[12] << 8) | buffer[13];
-        packet.timestamp = (buffer[14] << 8) | buffer[15];
+        packet.sequence_number = (buffer[9] << 8) | buffer[10];
+        packet.ttl = buffer[11];
+        packet.priority_flags = buffer[12];
+        packet.fragment_id = (buffer[13] << 8) | buffer[14];
+        packet.timestamp = ((uint32_t)buffer[15] << 24) | ((uint32_t)buffer[16] << 16) | 
+                          ((uint32_t)buffer[17] << 8) | buffer[18];  // 32-bit timestamp
 
         if (length < HEADER_SIZE + packet.payload_length) {
             return false;
@@ -110,8 +113,8 @@ public:
             memcpy(packet.payload, buffer + HEADER_SIZE, packet.payload_length);
         }
 
-        // Verify checksum from buffer (not struct, to avoid padding issues)
-        uint8_t computed_checksum = computeChecksumFromBuffer(buffer, length);
+        // Verify CRC-16 checksum from buffer (not struct, to avoid padding issues)
+        uint16_t computed_checksum = computeChecksumFromBuffer(buffer, length);
         if (computed_checksum != received_checksum) {
             return false; // Checksum verification failed
         }

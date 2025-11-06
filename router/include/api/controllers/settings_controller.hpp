@@ -58,9 +58,6 @@ public:
         info->addTag("Settings");
     }
     ENDPOINT("GET", "/api/settings", getSettings) {
-        printf("[API] GET /api/settings - request received\n");
-        fflush(stdout);
-
         auto dto = SettingsDto::createShared();
 
         if (!m_settingsService) {
@@ -100,9 +97,6 @@ public:
     }
     ENDPOINT("PUT", "/api/settings", updateSettings,
              BODY_DTO(Object<SettingsDto>, body)) {
-        printf("[API] PUT /api/settings - request received\n");
-        fflush(stdout);
-
         if (!m_settingsService) {
             auto errorDto = StatusDto::createShared();
             errorDto->status = "error";

@@ -121,6 +121,7 @@ public:
 
       packetDto->decodedHeader = packet.decoded_header;
       packetDto->decodedPayload = packet.decoded_payload;
+      packetDto->decryptedPayload = packet.decrypted_payload;
       
       packetDto->isValid = packet.is_valid;
       packetDto->errorFlags = packet.error_flags;

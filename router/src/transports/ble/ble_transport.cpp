@@ -258,11 +258,39 @@ namespace mita
                 logger_->info("Initializing BLE backend...");
 
                 try{
-                    backend_ = create_simplebluez_backend(config_);
+                    // Use peripheral backend instead of SimpleBluez
+                    logger_->info("Creating peripheral mode backend");
+                    backend_ = create_peripheral_backend(config_);
+
                     if (!backend_)
                     {
-                        logger_->error("Failed to create BLE backend");
+                        logger_->error("Failed to create BLE peripheral backend");
                         return false;
+                    }
+
+                    // Register GATT service and characteristic
+                    logger_->info("Registering GATT service",
+                                  core::LogContext{}
+                                      .add("service_uuid", config_.ble.service_uuid)
+                                      .add("char_uuid", config_.ble.characteristic_uuid));
+
+                    bool gatt_ok = backend_->register_gatt_service(
+                        config_.ble.service_uuid,
+                        config_.ble.characteristic_uuid,
+                        [this](const std::string &client_addr, const std::vector<uint8_t> &data)
+                        {
+                            // Handle incoming data from client
+                            this->on_data_received(client_addr, data);
+                        },
+                        [this](const std::string &client_addr) -> std::vector<uint8_t>
+                        {
+                            // Handle read requests (not commonly used)
+                            return {};
+                        });
+
+                    if (!gatt_ok)
+                    {
+                        logger_->warning("GATT service registration returned false (may need manual setup)");
                     }
                 }
                 catch (const std::exception &e)
@@ -271,82 +299,75 @@ namespace mita
                     return false;
                 }
 
-                logger_->info("BLE backend initialized");
+                logger_->info("BLE peripheral backend initialized");
                 return true;
             }
 
             bool BLETransport::start_discovery()
             {
-                logger_->info("Starting BLE discovery...");
+                logger_->info("Starting BLE advertising (peripheral mode)...");
 
-                bool scan_started = backend_->start_scan();
-                if (!scan_started)
+                // In peripheral mode, we advertise instead of scanning
+                bool adv_started = backend_->start_advertising(config_.ble.device_name);
+                if (!adv_started)
                 {
-                    logger_->error("BLE backend failed to start scan");
+                    logger_->error("BLE backend failed to start advertising");
                     return false;
                 }
 
-                logger_->info("BLE discovery started");
+                logger_->info("BLE advertising started",
+                              core::LogContext{}.add("device_name", config_.ble.device_name));
                 return true;
             }
 
             void BLETransport::stop_discovery()
             {
-                logger_->info("Stopping BLE discovery...");
-                backend_->stop_scan();
-                logger_->info("BLE discovery stopped");
+                logger_->info("Stopping BLE advertising...");
+                backend_->stop_advertising();
+                logger_->info("BLE advertising stopped");
             }
 
             void BLETransport::scan_loop()
             {
-                logger_->info("Scan loop thread started");
+                logger_->info("Peripheral mode monitoring thread started");
 
                 while (running_)
                 {
                     try
                     {
-                        // get list of discovered devices from backend
-                        auto devices = backend_->list_devices();
+                        // In peripheral mode, we don't scan for devices
+                        // Instead, we monitor connected clients and handle timeouts
 
-                        logger_->debug("Scan cycle",
-                                      core::LogContext{}.add("discovered_devices", devices.size()));
+                        logger_->debug("Peripheral mode: monitoring clients");
 
-                        // process each discovered device
-                        for (const auto &device : devices)
-                        {
-                            if (!running_)
-                            {
-                                break; 
-                            }
-
-                            handle_device_found(device.address, device.name);
-                        }
-
+                        // Check heartbeat timeouts for connected clients
                         check_heartbeat_timeouts();
 
                         // Cleanup disconnected devices
                         cleanup_disconnected_devices();
 
+                        // Sleep for the configured interval
                         std::unique_lock<std::mutex> lock(scan_mutex_);
                         scan_cv_.wait_for(lock, std::chrono::duration<double>(config_.ble.scan_pause),
                                          [this] { return !running_; });
                     }
                     catch (const std::exception &e)
                     {
-                        logger_->error("Error in scan loop",
-                                      core::LogContext{}.add("error", e.what()));
+                        logger_->error("Error in peripheral monitoring loop",
+                                       core::LogContext{}.add("error", e.what()));
 
                         std::unique_lock<std::mutex> lock(scan_mutex_);
                         scan_cv_.wait_for(lock, std::chrono::seconds(5),
-                                         [this] { return !running_; });
+                                          [this]
+                                          { return !running_; });
                     }
                 }
 
-                logger_->info("Scan loop thread stopped");
+                logger_->info("Peripheral monitoring thread stopped");
             }
 
             void BLETransport::handle_device_found(const std::string &address,
-                                                  const std::string &name)
+                                                   const std::string &name)
             {
                 if (!running_)
                 {
@@ -354,8 +375,8 @@ namespace mita
                 }
 
                 // comment debug log cause it too much I cant take it
-                //logger_->debug("Device found",
-                              //core::LogContext{}.add("address", address).add("name", name));
+                // logger_->debug("Device found",
+                // core::LogContext{}.add("address", address).add("name", name));
 
                 // check if already connected
                 auto existing_handler = device_registry_.get_device(address);
@@ -365,11 +386,10 @@ namespace mita
                     if (!existing_handler->is_connected())
                     {
                         logger_->info("Device found in registry but disconnected - attempting reconnect",
-                                     core::LogContext{}
-                                         .add("address", address)
-                                         .add("device_id", existing_handler->get_device_id()));
+                                      core::LogContext{}
+                                          .add("address", address)
+                                          .add("device_id", existing_handler->get_device_id()));
 
-                        
                         if (backend_->connect(address))
                         {
                             // enable notifications
@@ -386,27 +406,27 @@ namespace mita
                                 if (existing_handler->reconnect())
                                 {
                                     logger_->info("Device successfully reconnected",
-                                                 core::LogContext{}
-                                                     .add("address", address)
-                                                     .add("device_id", existing_handler->get_device_id()));
+                                                  core::LogContext{}
+                                                      .add("address", address)
+                                                      .add("device_id", existing_handler->get_device_id()));
                                 }
                                 else
                                 {
                                     logger_->warning("Handler reconnect failed",
-                                                    core::LogContext{}.add("address", address));
+                                                     core::LogContext{}.add("address", address));
                                 }
                             }
                             else
                             {
                                 logger_->warning("Failed to re-enable notifications on reconnect",
-                                                core::LogContext{}.add("address", address));
+                                                 core::LogContext{}.add("address", address));
                                 backend_->disconnect(address);
                             }
                         }
                         else
                         {
                             logger_->warning("Backend reconnect failed",
-                                            core::LogContext{}.add("address", address));
+                                             core::LogContext{}.add("address", address));
                         }
                     }
 
@@ -427,8 +447,7 @@ namespace mita
                 if (device_registry_.get_device_count() >= config_.ble.max_connections)
                 {
                     logger_->debug("Max connections reached - skipping device",
-                                  core::LogContext{}.add("address", address)
-                                      .add("max_connections", config_.ble.max_connections));
+                                   core::LogContext{}.add("address", address).add("max_connections", config_.ble.max_connections));
                     return;
                 }
 
@@ -440,19 +459,19 @@ namespace mita
                     seen_devices_.insert(address);
 
                     // same here, too much logs
-                    //logger_->debug("Device does not have required service",
-                                  //core::LogContext{}.add("address", address)
-                                      //.add("service_uuid", config_.ble.service_uuid));
+                    // logger_->debug("Device does not have required service",
+                    // core::LogContext{}.add("address", address)
+                    //.add("service_uuid", config_.ble.service_uuid));
                     return;
                 }
 
                 logger_->info("Connecting to new device",
-                             core::LogContext{}.add("address", address).add("name", name));
+                              core::LogContext{}.add("address", address).add("name", name));
 
                 if (connect_to_device(address))
                 {
                     logger_->info("Successfully connect to new device",
-                                 core::LogContext{}.add("address", address).add("name", name));
+                                  core::LogContext{}.add("address", address).add("name", name));
                 }
                 else
                 {
@@ -461,7 +480,7 @@ namespace mita
                     seen_devices_.insert(address);
 
                     logger_->warning("Failed to connect to device",
-                                    core::LogContext{}.add("address", address).add("name", name));
+                                     core::LogContext{}.add("address", address).add("name", name));
                 }
             }
 
@@ -473,18 +492,17 @@ namespace mita
                 }
 
                 logger_->info("Connecting to device",
-                             core::LogContext{}.add("address", address));
+                              core::LogContext{}.add("address", address));
 
                 if (!backend_->connect(address))
                 {
                     logger_->warning("Backend failed to connect to device",
-                                    core::LogContext{}.add("address", address));
+                                     core::LogContext{}.add("address", address));
                     return false;
                 }
 
-
                 auto handler = std::make_shared<BLEDeviceHandler>(
-                    backend_.get(),  
+                    backend_.get(),
                     address,
                     config_,
                     routing_service_,
@@ -492,11 +510,10 @@ namespace mita
                     statistics_service_,
                     packet_monitor_);
 
-
                 if (!handler->connect())
                 {
                     logger_->error("Device handler failed to connect",
-                                  core::LogContext{}.add("address", address));
+                                   core::LogContext{}.add("address", address));
                     backend_->disconnect(address);
                     return false;
                 }
@@ -506,11 +523,10 @@ namespace mita
                 if (!device_registry_.add_device(address, handler))
                 {
                     logger_->error("Failed to add device to registry",
-                                  core::LogContext{}.add("address", address));
+                                   core::LogContext{}.add("address", address));
                     backend_->disconnect(address);
                     return false;
                 }
-
 
                 // red alert!!! handler MUST be in registry before this, as notifications can arrive immediately
                 if (!backend_->enable_notifications(
@@ -524,15 +540,14 @@ namespace mita
                         }))
                 {
                     logger_->error("Failed to enable notifications",
-                                  core::LogContext{}.add("address", address));
+                                   core::LogContext{}.add("address", address));
                     device_registry_.remove_device(address);
                     backend_->disconnect(address);
                     return false;
                 }
 
                 logger_->info("Successfully connected and registered device",
-                             core::LogContext{}.add("address", address)
-                                 .add("registry_size", device_registry_.get_device_count()));
+                              core::LogContext{}.add("address", address).add("registry_size", device_registry_.get_device_count()));
 
                 return true;
             }
@@ -548,28 +563,24 @@ namespace mita
                 if (backend_->has_service(address, config_.ble.service_uuid))
                 {
                     logger_->debug("Device has required service",
-                                  core::LogContext{}.add("address", address)
-                                      .add("service_uuid", config_.ble.service_uuid));
+                                   core::LogContext{}.add("address", address).add("service_uuid", config_.ble.service_uuid));
                     return true;
                 }
 
                 return false;
             }
 
-
-
             void BLETransport::on_notification_received(const std::string &address,
-                                                       const std::vector<uint8_t> &data)
+                                                        const std::vector<uint8_t> &data)
             {
 
                 logger_->debug("Notification received",
-                              core::LogContext{}.add("address", address).add("size", data.size()));
-
+                               core::LogContext{}.add("address", address).add("size", data.size()));
 
                 if (!event_queue_.enqueue(BLEEvent::notification(address, data)))
                 {
                     logger_->warning("Failed to enqueue notification - queue full",
-                                    core::LogContext{}.add("address", address));
+                                     core::LogContext{}.add("address", address));
                 }
             }
 
@@ -594,7 +605,7 @@ namespace mita
             {
                 logger_->debug("Cleaning up disconnected devices");
 
-                  auto all_devices = device_registry_.get_all_devices();
+                auto all_devices = device_registry_.get_all_devices();
                 int removed_count = 0;
 
                 for (auto &handler : all_devices)
@@ -605,9 +616,9 @@ namespace mita
                         std::string address = handler->get_device_address();
 
                         logger_->info("Removing device after grace period",
-                                     core::LogContext{}
-                                         .add("device_id", device_id)
-                                         .add("address", address));
+                                      core::LogContext{}
+                                          .add("device_id", device_id)
+                                          .add("address", address));
 
                         // disconnect backend
                         backend_->disconnect(address);
@@ -616,7 +627,6 @@ namespace mita
                         if (device_registry_.remove_device(address))
                         {
                             removed_count++;
-
 
                             if (!device_id.empty())
                             {
@@ -632,6 +642,35 @@ namespace mita
                                   core::LogContext{}.add("count", removed_count));
                 }
             }
+
+            void BLETransport::on_data_received(const std::string &client_address, const std::vector<uint8_t> &data)
+            {
+                logger_->debug("Data received from client",
+                               core::LogContext{}
+                                   .add("client_address", client_address)
+                                   .add("data_size", data.size()));
+
+                // Check if we already have a device handler for this client
+                auto handler = device_registry_.get_device(client_address);
+
+                if (!handler)
+                {
+                    // New client connection - create device handler
+                    logger_->info("New client connected via BLE",
+                                  core::LogContext{}.add("address", client_address));
+
+                    // Queue a notification event for processing
+                    // The event processor will handle creating the device handler
+                    BLEEvent event = BLEEvent::notification(client_address, data);
+                    event_queue_.enqueue(event);
+                }
+                else
+                {
+                    // Existing client - process data via notification event
+                    on_notification_received(client_address, data);
+                }
+            }
+
         } // namespace ble
     }     // namespace transports
 } // namespace mita

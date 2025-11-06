@@ -91,10 +91,7 @@ public:
     } catch (...) {
       offsetVal = 0;
     }
-
-    printf("[API] GET /api/packets - request received (limit=%d, offset=%d)\n", limitVal, offsetVal);
-    fflush(stdout);
-
+    
     auto dto = PacketListDto::createShared();
     dto->packets = oatpp::Vector<oatpp::Object<PacketInfoDto>>::createShared();
 
@@ -138,6 +135,9 @@ public:
 
       packetDto->decodedHeader = packet.decoded_header;
       packetDto->decodedPayload = packet.decoded_payload;
+      packetDto->decryptedPayload = packet.decrypted_payload.empty() 
+        ? nullptr 
+        : oatpp::String(packet.decrypted_payload.c_str());
 
       dto->packets->push_back(packetDto);
     }

@@ -12,9 +12,9 @@
         "enabled": true,
         "scan_interval": 5.0,
         "scan_pause": 5.0,
-        "service_uuid": "12345678-1234-1234-1234-123456789abc",
-        "characteristic_uuid": "12345678-1234-1234-1234-123456789abd",
-        "device_name": "Mita_Router_1",
+        "service_uuid": "4fafc201-1fb5-459e-8fcc-c5c9c331914b",
+        "characteristic_uuid": "beb5483e-36e1-4688-b7f5-ea07361b26a8",
+        "device_name": "Mita_Router",
         "max_connections": 7
     },
     "routing": {

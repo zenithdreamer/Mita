@@ -9,7 +9,7 @@
 #endif
 
 #ifndef MITA_DEFAULT_SHARED_SECRET
-#define MITA_DEFAULT_SHARED_SECRET "Mita_password"
+#define MITA_DEFAULT_SHARED_SECRET "Mita_password"  // Master secret for PSK derivation
 #endif
 
 #ifndef MITA_DEFAULT_DEVICE_ID

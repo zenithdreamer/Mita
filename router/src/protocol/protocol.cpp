@@ -2,6 +2,8 @@
 #include <stdexcept>
 #include <cstring>
 #include <mutex>
+#include <iomanip>
+#include <sstream>
 #include "core/logger.hpp"
 #include <openssl/evp.h>
 #include <openssl/aes.h>
@@ -66,39 +68,67 @@ namespace mita
             payload_ = payload;
         }
 
-        uint8_t ProtocolPacket::compute_checksum() const
+        // NOTE: CRC-16 for basic transport-level integrity checking only
+        // This is NOT cryptographically secure and should not be relied upon for security
+        // Use AES-GCM authentication tags for cryptographic integrity protection
+        
+        // CRC-16-CCITT implementation
+        uint16_t ProtocolPacket::compute_checksum() const
         {
-            uint32_t sum = 0;
-
+            // Build data without checksum field for CRC calculation
+            std::vector<uint8_t> data;
+            data.reserve(PACKET_HEADER_SIZE - 2 + payload_.size());
+            
             uint8_t version_flags = (version_ << 4) | (flags_ & 0x0F);
-            sum += version_flags;
-            sum += msg_type_;
-            sum += (source_addr_ >> 8) & 0xFF;
-            sum += source_addr_ & 0xFF;
-            sum += (dest_addr_ >> 8) & 0xFF;
-            sum += dest_addr_ & 0xFF;
-            sum += static_cast<uint8_t>(payload_.size());
-            // Byte 7 (checksum) is NOT included in computation
-            sum += (sequence_number_ >> 8) & 0xFF;
-            sum += sequence_number_ & 0xFF;
-            sum += ttl_;
-            sum += priority_flags_;
-            sum += (fragment_id_ >> 8) & 0xFF;
-            sum += fragment_id_ & 0xFF;
-            sum += (timestamp_ >> 8) & 0xFF;
-            sum += timestamp_ & 0xFF;
-
+            
+            // Bytes 0-6 (before checksum)
+            data.push_back(version_flags);
+            data.push_back(msg_type_);
+            data.push_back((source_addr_ >> 8) & 0xFF);
+            data.push_back(source_addr_ & 0xFF);
+            data.push_back((dest_addr_ >> 8) & 0xFF);
+            data.push_back(dest_addr_ & 0xFF);
+            data.push_back(static_cast<uint8_t>(payload_.size()));
+            
+            // Skip bytes 7-8 (checksum field)
+            
+            // Bytes 9-18 (after checksum)
+            data.push_back((sequence_number_ >> 8) & 0xFF);
+            data.push_back(sequence_number_ & 0xFF);
+            data.push_back(ttl_);
+            data.push_back(priority_flags_);
+            data.push_back((fragment_id_ >> 8) & 0xFF);
+            data.push_back(fragment_id_ & 0xFF);
+            data.push_back((timestamp_ >> 24) & 0xFF);
+            data.push_back((timestamp_ >> 16) & 0xFF);
+            data.push_back((timestamp_ >> 8) & 0xFF);
+            data.push_back(timestamp_ & 0xFF);
+            
             // Add payload bytes
-            for (uint8_t byte : payload_)
+            data.insert(data.end(), payload_.begin(), payload_.end());
+            
+            // Compute CRC-16-CCITT
+            uint16_t crc = 0xFFFF;
+            for (uint8_t byte : data)
             {
-                sum += byte;
+                crc ^= (uint16_t)byte << 8;
+                for (uint8_t j = 0; j < 8; j++)
+                {
+                    if (crc & 0x8000)
+                    {
+                        crc = (crc << 1) ^ 0x1021;  // Polynomial
+                    }
+                    else
+                    {
+                        crc = crc << 1;
+                    }
+                }
             }
-
-            // Return 8-bit checksum (sum of all bytes modulo 256, then one's complement)
-            return static_cast<uint8_t>(~sum);
+            
+            return crc;
         }
 
-        bool ProtocolPacket::verify_checksum(uint8_t received_checksum) const
+        bool ProtocolPacket::verify_checksum(uint16_t received_checksum) const
         {
             return compute_checksum() == received_checksum;
         }
@@ -116,15 +146,21 @@ namespace mita
             data[4] = (dest_addr_ >> 8) & 0xFF;
             data[5] = dest_addr_ & 0xFF;
             data[6] = static_cast<uint8_t>(payload_.size());
-            data[7] = compute_checksum();
-            data[8] = (sequence_number_ >> 8) & 0xFF;
-            data[9] = sequence_number_ & 0xFF;
-            data[10] = ttl_;
-            data[11] = priority_flags_;
-            data[12] = (fragment_id_ >> 8) & 0xFF;
-            data[13] = fragment_id_ & 0xFF;
-            data[14] = (timestamp_ >> 8) & 0xFF;
-            data[15] = timestamp_ & 0xFF;
+            
+            uint16_t crc = compute_checksum();
+            data[7] = (crc >> 8) & 0xFF;  // CRC-16 high byte
+            data[8] = crc & 0xFF;          // CRC-16 low byte
+            
+            data[9] = (sequence_number_ >> 8) & 0xFF;
+            data[10] = sequence_number_ & 0xFF;
+            data[11] = ttl_;
+            data[12] = priority_flags_;
+            data[13] = (fragment_id_ >> 8) & 0xFF;
+            data[14] = fragment_id_ & 0xFF;
+            data[15] = (timestamp_ >> 24) & 0xFF;  // 32-bit timestamp
+            data[16] = (timestamp_ >> 16) & 0xFF;
+            data[17] = (timestamp_ >> 8) & 0xFF;
+            data[18] = timestamp_ & 0xFF;
 
             std::copy(payload_.begin(), payload_.end(), data.begin() + PACKET_HEADER_SIZE);
 
@@ -150,13 +186,14 @@ namespace mita
             uint16_t source_addr = (static_cast<uint16_t>(data[2]) << 8) | data[3];
             uint16_t dest_addr = (static_cast<uint16_t>(data[4]) << 8) | data[5];
             uint8_t payload_len = data[6];
-            uint8_t received_checksum = data[7];
+            uint16_t received_checksum = (static_cast<uint16_t>(data[7]) << 8) | data[8];  // CRC-16
 
-            uint16_t sequence_number = (static_cast<uint16_t>(data[8]) << 8) | data[9];
-            uint8_t ttl = data[10];
-            uint8_t priority_flags = data[11];
-            uint16_t fragment_id = (static_cast<uint16_t>(data[12]) << 8) | data[13];
-            uint16_t timestamp = (static_cast<uint16_t>(data[14]) << 8) | data[15];
+            uint16_t sequence_number = (static_cast<uint16_t>(data[9]) << 8) | data[10];
+            uint8_t ttl = data[11];
+            uint8_t priority_flags = data[12];
+            uint16_t fragment_id = (static_cast<uint16_t>(data[13]) << 8) | data[14];
+            uint32_t timestamp = ((uint32_t)data[15] << 24) | ((uint32_t)data[16] << 16) | 
+                                ((uint32_t)data[17] << 8) | data[18];  // 32-bit timestamp
 
             if (version != PROTOCOL_VERSION)
             {
@@ -372,7 +409,7 @@ namespace mita
         }
 
         PacketCrypto::PacketCrypto(const std::vector<uint8_t> &session_key)
-            : session_key_(session_key), impl_(std::make_unique<Impl>(session_key))
+            : session_key_(session_key), iv_counter_(0), impl_(std::make_unique<Impl>(session_key))
         {
             // Derive separate keys for encryption and MAC to prevent key reuse
             std::vector<uint8_t> enc_info = {'E', 'N', 'C'};
@@ -380,6 +417,12 @@ namespace mita
             
             encryption_key_ = derive_subkey(session_key, enc_info);
             mac_key_ = derive_subkey(session_key, mac_info);
+            
+            // Generate random session salt once per session
+            if (RAND_bytes(reinterpret_cast<unsigned char*>(&session_salt_), sizeof(session_salt_)) != 1)
+            {
+                throw std::runtime_error("Failed to generate session salt");
+            }
         }
 
         PacketCrypto::~PacketCrypto() = default;
@@ -402,6 +445,42 @@ namespace mita
         bool PacketCrypto::verify_hmac(const std::vector<uint8_t> &data, const std::vector<uint8_t> &hmac)
         {
             return impl_->verify_hmac(data, hmac);
+        }
+        
+        // Session key rotation for forward secrecy
+        void PacketCrypto::rekey(const std::vector<uint8_t> &nonce3, const std::vector<uint8_t> &nonce4)
+        {
+            // Derive new session key: HMAC-SHA256(old_session_key, nonce3 || nonce4)
+            std::vector<uint8_t> nonce_data;
+            nonce_data.insert(nonce_data.end(), nonce3.begin(), nonce3.end());
+            nonce_data.insert(nonce_data.end(), nonce4.begin(), nonce4.end());
+            
+            unsigned int hmac_len;
+            std::vector<uint8_t> new_session_key(EVP_MAX_MD_SIZE);
+            
+            unsigned char *result = HMAC(EVP_sha256(),
+                                         session_key_.data(), session_key_.size(),
+                                         nonce_data.data(), nonce_data.size(),
+                                         new_session_key.data(), &hmac_len);
+            
+            if (!result)
+            {
+                throw std::runtime_error("Failed to derive new session key during rekey");
+            }
+            
+            // Update session key (first 16 bytes for AES-128)
+            new_session_key.resize(SESSION_KEY_SIZE);
+            session_key_ = new_session_key;
+            
+            // Re-derive encryption and MAC keys from new session key
+            encryption_key_ = derive_subkey(session_key_, std::vector<uint8_t>{'E', 'N', 'C'});
+            mac_key_ = derive_subkey(session_key_, std::vector<uint8_t>{'M', 'A', 'C'});
+            
+            // Reset IV counter for new session
+            iv_counter_ = 0;
+            
+            // Generate new session salt
+            RAND_bytes(reinterpret_cast<unsigned char*>(&session_salt_), sizeof(session_salt_));
         }
         
         // Authenticated Encryption (Encrypt-then-MAC)
@@ -485,11 +564,22 @@ namespace mita
                 return {};
             }
 
-            // Generate random 12-byte IV (recommended for GCM)
+            // Generate 12-byte IV using counter (prevents IV reuse)
+            // Format: session_salt (4 bytes) || counter (8 bytes)
+            // This guarantees no IV reuse as long as counter doesn't overflow
             std::vector<uint8_t> iv(12);
-            if (RAND_bytes(iv.data(), 12) != 1)
+            std::memcpy(iv.data(), &session_salt_, 4);
+            uint64_t current_counter = iv_counter_.fetch_add(1);
+            std::memcpy(iv.data() + 4, &current_counter, 8);
+            
+            // Check for counter overflow (extremely unlikely: 2^64 encryptions)
+            if (current_counter == UINT64_MAX)
             {
-                throw std::runtime_error("Failed to generate IV for GCM");
+                auto logger = core::get_logger("Protocol");
+                if (logger)
+                {
+                    logger->warning("IV counter overflow - session should be rekeyed");
+                }
             }
 
             // Create cipher context
@@ -667,6 +757,34 @@ namespace mita
         HandshakeManager::HandshakeManager(const std::string &router_id, const std::string &shared_secret)
             : router_id_(router_id), shared_secret_(shared_secret.begin(), shared_secret.end()) {}
 
+        // Derive device-specific PSK from master secret
+        // This provides per-device key isolation - compromise of one device doesn't expose master secret
+        std::vector<uint8_t> derive_device_psk(const std::vector<uint8_t> &master_secret, 
+                                              const std::string &device_id)
+        {
+            // Device PSK = HMAC-SHA256(master_secret, "DEVICE_PSK" || device_id)
+            std::vector<uint8_t> data;
+            std::string prefix = "DEVICE_PSK";
+            data.insert(data.end(), prefix.begin(), prefix.end());
+            data.insert(data.end(), device_id.begin(), device_id.end());
+            
+            unsigned int hmac_len;
+            std::vector<uint8_t> device_psk(EVP_MAX_MD_SIZE);
+            
+            unsigned char *result = HMAC(EVP_sha256(),
+                                        master_secret.data(), master_secret.size(),
+                                        data.data(), data.size(),
+                                        device_psk.data(), &hmac_len);
+            
+            if (!result)
+            {
+                throw std::runtime_error("Failed to derive device PSK");
+            }
+            
+            device_psk.resize(32);  // Return full 32-byte key for stronger security
+            return device_psk;
+        }
+
         std::unique_ptr<ProtocolPacket> HandshakeManager::create_hello_packet(const std::string &device_id)
         {
             auto nonce1 = generate_nonce();
@@ -703,6 +821,8 @@ namespace mita
         std::vector<uint8_t> HandshakeManager::derive_session_key(const std::vector<uint8_t> &nonce1,
                                                                   const std::vector<uint8_t> &nonce2)
         {
+            // NOTE: This function is called AFTER authentication, so we should use master secret
+            // The caller must ensure device-specific PSK is used when needed
             // Key derivation using HMAC-SHA256 (matches Python implementation)
             std::vector<uint8_t> key_data;
             key_data.insert(key_data.end(), nonce1.begin(), nonce1.end());
@@ -717,6 +837,36 @@ namespace mita
             if (!result)
             {
                 throw std::runtime_error("Failed to derive session key");
+            }
+
+            // Return first 16 bytes for AES-128
+            derived_key.resize(SESSION_KEY_SIZE);
+            return derived_key;
+        }
+        
+        // Helper to derive session key using device-specific PSK
+        std::vector<uint8_t> HandshakeManager::derive_session_key_with_device_psk(
+            const std::vector<uint8_t> &nonce1,
+            const std::vector<uint8_t> &nonce2,
+            const std::string &device_id)
+        {
+            // Derive device-specific PSK first
+            std::vector<uint8_t> device_psk = derive_device_psk(shared_secret_, device_id);
+            
+            // Then derive session key using device PSK
+            std::vector<uint8_t> key_data;
+            key_data.insert(key_data.end(), nonce1.begin(), nonce1.end());
+            key_data.insert(key_data.end(), nonce2.begin(), nonce2.end());
+
+            unsigned int hmac_len;
+            std::vector<uint8_t> derived_key(EVP_MAX_MD_SIZE);
+
+            unsigned char *result = HMAC(EVP_sha256(), device_psk.data(), device_psk.size(),
+                                         key_data.data(), key_data.size(), derived_key.data(), &hmac_len);
+
+            if (!result)
+            {
+                throw std::runtime_error("Failed to derive session key with device PSK");
             }
 
             // Return first 16 bytes for AES-128
@@ -779,8 +929,108 @@ namespace mita
             }
         }
         
+        bool HandshakeManager::is_nonce_reused(const std::vector<uint8_t> &nonce)
+        {
+            std::lock_guard<std::mutex> lock(nonce_tracking_mutex_);
+            auto now = std::chrono::steady_clock::now();
+            
+            // Remove expired nonces
+            while (!recent_nonces_.empty())
+            {
+                auto age = std::chrono::duration_cast<std::chrono::seconds>(
+                    now - recent_nonces_.front().timestamp);
+                
+                if (age > nonce_expiry_)
+                {
+                    recent_nonces_.pop_front();
+                }
+                else
+                {
+                    break;
+                }
+            }
+            
+            // Check if nonce exists in recent history
+            for (const auto &record : recent_nonces_)
+            {
+                if (record.nonce == nonce)
+                {
+                    auto logger = core::get_logger("Protocol");
+                    if (logger)
+                    {
+                        logger->warning("Nonce reuse detected - possible replay attack",
+                                      core::LogContext()
+                                          .add("nonce_size", nonce.size()));
+                    }
+                    return true;  // Nonce is being reused
+                }
+            }
+            
+            return false;  // Nonce is unique
+        }
+
+        void HandshakeManager::record_nonce(const std::vector<uint8_t> &nonce)
+        {
+            std::lock_guard<std::mutex> lock(nonce_tracking_mutex_);
+            
+            // Add to history
+            recent_nonces_.push_back({nonce, std::chrono::steady_clock::now()});
+            
+            // Limit history size
+            if (recent_nonces_.size() > max_nonce_history_)
+            {
+                recent_nonces_.pop_front();
+            }
+        }
+        
+        bool HandshakeManager::check_global_rate_limit()
+        {
+            std::lock_guard<std::mutex> lock(global_rate_limit_mutex_);
+            auto now = std::chrono::steady_clock::now();
+            
+            // Remove attempts older than the window
+            while (!global_handshake_attempts_.empty())
+            {
+                auto age = std::chrono::duration_cast<std::chrono::seconds>(
+                    now - global_handshake_attempts_.front());
+                
+                if (age > global_window_)
+                {
+                    global_handshake_attempts_.pop_front();
+                }
+                else
+                {
+                    break;
+                }
+            }
+            
+            // Check if too many global attempts
+            if (global_handshake_attempts_.size() >= global_max_attempts_)
+            {
+                auto logger = core::get_logger("Protocol");
+                if (logger)
+                {
+                    logger->warning("GLOBAL rate limit exceeded - possible distributed DoS attack",
+                                  core::LogContext()
+                                      .add("global_attempts", global_handshake_attempts_.size())
+                                      .add("window_seconds", global_window_.count()));
+                }
+                return false;  // Global rate limit exceeded
+            }
+            
+            // Record this attempt
+            global_handshake_attempts_.push_back(now);
+            return true;  // Allowed
+        }
+
         bool HandshakeManager::check_rate_limit(const std::string &source_id)
         {
+            // Check global rate limit first
+            if (!check_global_rate_limit())
+            {
+                return false;  // Global limit exceeded
+            }
+
             std::lock_guard<std::mutex> lock(rate_limit_mutex_);
             auto now = std::chrono::steady_clock::now();
             
@@ -823,6 +1073,21 @@ namespace mita
 
         std::unique_ptr<ProtocolPacket> HandshakeManager::create_challenge_packet(const std::string &device_id, const std::vector<uint8_t> &nonce1)
         {
+            // Check if nonce is being reused
+            if (is_nonce_reused(nonce1))
+            {
+                auto logger = core::get_logger("Protocol");
+                if (logger)
+                {
+                    logger->warning("Rejecting HELLO with reused nonce - possible replay attack",
+                                  core::LogContext().add("device_id", device_id));
+                }
+                return nullptr;  // Reject handshake with reused nonce
+            }
+            
+            // Record nonce to prevent future reuse
+            record_nonce(nonce1);
+            
             auto nonce2 = generate_nonce();
             
             // Get current timestamp (Unix time in milliseconds)
@@ -880,14 +1145,14 @@ namespace mita
                 return false;
             }
             
-            // Validate handshake freshness (30 second window)
+            // Validate handshake freshness (10 second window - reduced from 30s)
             if (it->second.creation_time_ms > 0)
             {
                 auto now = std::chrono::system_clock::now();
                 uint64_t current_time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                     now.time_since_epoch()).count();
                 
-                const uint64_t MAX_HANDSHAKE_AGE_MS = 30000;  // 30 seconds
+                const uint64_t MAX_HANDSHAKE_AGE_MS = 10000;  // 10 seconds (reduced from 30)
                 uint64_t handshake_age = current_time_ms - it->second.creation_time_ms;
                 
                 if (handshake_age > MAX_HANDSHAKE_AGE_MS)
@@ -950,10 +1215,13 @@ namespace mita
             hmac_data.insert(hmac_data.end(), device_id.begin(), device_id.end());
             hmac_data.insert(hmac_data.end(), router_id_.begin(), router_id_.end());
 
+            // Derive device-specific PSK for this authentication
+            std::vector<uint8_t> device_psk = derive_device_psk(shared_secret_, device_id);
+
             unsigned int hmac_len = 0;
             std::vector<uint8_t> expected_tag(EVP_MAX_MD_SIZE);
             unsigned char *result = HMAC(EVP_sha256(),
-                                         shared_secret_.data(), static_cast<int>(shared_secret_.size()),
+                                         device_psk.data(), static_cast<int>(device_psk.size()),
                                          hmac_data.data(), hmac_data.size(),
                                          expected_tag.data(), &hmac_len);
             if (!result)
@@ -983,7 +1251,12 @@ namespace mita
             // Successful verification -> derive and store session key if not already present
             if (it->second.session_key.empty())
             {
-                it->second.session_key = derive_session_key(it->second.nonce1, it->second.nonce2);
+                // Use device-specific PSK for session key derivation
+                it->second.session_key = derive_session_key_with_device_psk(
+                    it->second.nonce1, 
+                    it->second.nonce2,
+                    device_id
+                );
             }
 
             return true;
@@ -1007,10 +1280,13 @@ namespace mita
 
             if (nonce1_copy.size() == 16)
             {
+                // Derive device-specific PSK
+                std::vector<uint8_t> device_psk = derive_device_psk(shared_secret_, device_id);
+                
                 unsigned int hmac_len = 0;
                 std::vector<uint8_t> tag(EVP_MAX_MD_SIZE);
                 unsigned char *result = HMAC(EVP_sha256(),
-                                             shared_secret_.data(), static_cast<int>(shared_secret_.size()),
+                                             device_psk.data(), static_cast<int>(device_psk.size()),
                                              nonce1_copy.data(), 16,  // Full 16 bytes
                                              tag.data(), &hmac_len);
                 if (result)

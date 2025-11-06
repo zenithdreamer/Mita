@@ -58,6 +58,7 @@ namespace mita
                 bool connect_to_device(const std::string &address);
                 bool device_has_service(const std::string &address);
                 void on_notification_received(const std::string &address, const std::vector<uint8_t> &data);
+                void on_data_received(const std::string &client_address, const std::vector<uint8_t> &data);  // New: peripheral mode
                 void check_heartbeat_timeouts();
                 void cleanup_disconnected_devices();
 

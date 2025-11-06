@@ -65,12 +65,13 @@ struct MonitoredPacket {
     std::string raw_data;   // Hex-encoded raw packet data
     std::string decoded_header;
     std::string decoded_payload;
+    std::string decrypted_payload; // Decrypted payload (if encrypted)
     int is_valid;           // 0 = invalid/failed, 1 = valid
     std::string error_flags; // e.g., "CHECKSUM_FAIL", "MALFORMED", "INVALID_VERSION"
 
     // Default constructor
     MonitoredPacket() : id(0), timestamp(0), source_addr(0), dest_addr(0),
-                        payload_size(0), encrypted(0), is_valid(1), error_flags("") {}
+                        payload_size(0), encrypted(0), decrypted_payload(""), is_valid(1), error_flags("") {}
 
     // Constructor with parameters
     MonitoredPacket(int64_t id, const std::string& packet_id, int64_t timestamp,
@@ -154,6 +155,7 @@ inline auto initStorage(const std::string& path) {
             make_column("raw_data", &MonitoredPacket::raw_data),
             make_column("decoded_header", &MonitoredPacket::decoded_header),
             make_column("decoded_payload", &MonitoredPacket::decoded_payload),
+            make_column("decrypted_payload", &MonitoredPacket::decrypted_payload, default_value("")),
             make_column("is_valid", &MonitoredPacket::is_valid, default_value(1)),
             make_column("error_flags", &MonitoredPacket::error_flags, default_value(""))
         )

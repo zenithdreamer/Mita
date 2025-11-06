@@ -24,6 +24,7 @@ namespace mita
         class RoutingService;
         class StatisticsService;
         class PacketMonitorService;
+        struct RouterStatisticsSnapshot;
     }
 }
 
@@ -59,6 +60,9 @@ namespace mita
             std::shared_ptr<protocol::PacketCrypto> session_crypto;
             std::map<std::string, std::string> metadata;
             
+            // Transport fingerprinting to prevent session hijacking
+            std::string transport_fingerprint;  // IP:port for WiFi, MAC address for BLE
+            
             // Sequence tracking for replay protection and reliability
             uint16_t last_valid_sequence{0};
             uint16_t expected_next_sequence{0};
@@ -70,8 +74,14 @@ namespace mita
             std::chrono::steady_clock::time_point session_created;
             std::chrono::steady_clock::time_point session_expires;
             
+            // Heartbeat rate limiting to prevent flood attacks
+            std::chrono::steady_clock::time_point last_heartbeat_time;
+            uint32_t heartbeat_count{0};
+            
             static constexpr std::chrono::seconds SESSION_LIFETIME{3600};  // 1 hour
             static constexpr size_t SEQUENCE_WINDOW_SIZE = 32;  // Reduced from 100 for better replay protection
+            static constexpr std::chrono::seconds HEARTBEAT_WINDOW{10};  // 10 second window
+            static constexpr uint32_t MAX_HEARTBEATS_PER_WINDOW = 5;  // Max 5 heartbeats per 10 seconds
 
             ManagedDevice() = default;
             ManagedDevice(const std::string &id, core::TransportType type)
@@ -79,7 +89,8 @@ namespace mita
                   connected_time(std::chrono::steady_clock::now()), last_activity(std::chrono::steady_clock::now()),
                   last_sequence_time(std::chrono::steady_clock::now()),
                   session_created(std::chrono::steady_clock::now()),
-                  session_expires(std::chrono::steady_clock::now() + SESSION_LIFETIME) {}
+                  session_expires(std::chrono::steady_clock::now() + SESSION_LIFETIME),
+                  last_heartbeat_time(std::chrono::steady_clock::now()) {}
             
             bool is_session_expired() const {
                 return std::chrono::steady_clock::now() > session_expires;
@@ -114,10 +125,13 @@ namespace mita
                                      std::shared_ptr<protocol::PacketCrypto> session_crypto);
             bool remove_device(const std::string &device_id);
             void update_device_activity(const std::string &device_id);
+            
+            // Set transport fingerprint for session binding
+            void set_transport_fingerprint(const std::string &device_id, const std::string &fingerprint);
 
-            // Packet handling
+            // Packet handling (with optional fingerprint for validation)
             void handle_packet(const std::string &device_id, const protocol::ProtocolPacket &packet,
-                               core::TransportType transport_type);
+                               core::TransportType transport_type, const std::string &current_fingerprint = "");
 
             // Message transmission
             bool send_message_to_device(const std::string &device_id, const std::vector<uint8_t> &message);
@@ -129,6 +143,9 @@ namespace mita
             std::vector<std::string> get_connected_device_ids() const;
             size_t get_device_count() const;
             size_t get_device_count_by_transport(core::TransportType transport) const;
+
+            // Statistics snapshot access
+            RouterStatisticsSnapshot get_statistics_snapshot() const;
 
             // Message handlers
             void register_message_handler(const std::string &handler_name, MessageHandler handler);
@@ -152,20 +169,31 @@ namespace mita
         private:
             // Internal packet processing
             void process_hello_packet(const std::string &device_id, const protocol::ProtocolPacket &packet);
-            void process_data_packet(const std::string &device_id, const protocol::ProtocolPacket &packet, core::TransportType transport_type);
+            void process_data_packet(const std::string &device_id, const protocol::ProtocolPacket &packet, core::TransportType transport_type, const std::string &packet_id = "");
             void process_control_packet(const std::string &device_id, const protocol::ProtocolPacket &packet);
+            void process_disconnect_packet(const std::string &device_id, const protocol::ProtocolPacket &packet, core::TransportType transport_type);
+            void process_session_rekey_packet(const std::string &device_id, const protocol::ProtocolPacket &packet, core::TransportType transport_type);
             
             // ACK packet sending
             void send_ack_packet(const std::string &device_id, uint16_t sequence_number, core::TransportType transport_type);
+            
+            // Error packet sending
+            void send_error_packet(const std::string &device_id, uint8_t error_code, uint16_t failed_sequence, core::TransportType transport_type);
             
             // Sequence validation for replay protection
             bool validate_sequence_number(ManagedDevice* device, uint16_t seq);
             void reset_sequence_tracking(ManagedDevice* device);
             
             // Timestamp validation for freshness (anti-replay)
-            // NOTE: Uses relative time (millis since boot) - NO RTC REQUIRED
+            // NOTE: Uses relative time (millis since boot), NO RTC REQUIRED
             // Works across different device boot times with lenient validation
-            bool validate_packet_timestamp(uint16_t timestamp);
+            bool validate_packet_timestamp(uint32_t timestamp);
+            
+            // Transport fingerprinting to prevent session hijacking
+            std::string generate_transport_fingerprint(const std::string &device_id, 
+                                                       core::TransportType transport_type) const;
+            bool validate_transport_fingerprint(const ManagedDevice *device, 
+                                               const std::string &current_fingerprint) const;
 
             // Device management helpers
             ManagedDevice *find_device(const std::string &device_id);

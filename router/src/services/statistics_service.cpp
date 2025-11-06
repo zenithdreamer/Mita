@@ -23,6 +23,10 @@ namespace mita
                 {"errors", errors.load()},
                 {"protocol_errors", protocol_errors.load()},
                 {"transport_errors", transport_errors.load()},
+                {"sequence_gaps_detected", sequence_gaps_detected.load()},
+                {"replay_attempts_blocked", replay_attempts_blocked.load()},
+                {"stale_packets_dropped", stale_packets_dropped.load()},
+                {"session_rekeys_completed", session_rekeys_completed.load()},
                 {"average_latency_ms", average_latency_ms.load()},
                 {"peak_concurrent_connections", peak_concurrent_connections.load()},
                 {"uptime_seconds", get_uptime_seconds()}};
@@ -49,6 +53,10 @@ namespace mita
             errors = 0;
             protocol_errors = 0;
             transport_errors = 0;
+            sequence_gaps_detected = 0;
+            replay_attempts_blocked = 0;
+            stale_packets_dropped = 0;
+            session_rekeys_completed = 0;
             average_latency_ms = 0;
             peak_concurrent_connections = 0;
             start_time = std::chrono::steady_clock::now();
@@ -82,6 +90,10 @@ namespace mita
                 {"errors", errors},
                 {"protocol_errors", protocol_errors},
                 {"transport_errors", transport_errors},
+                {"sequence_gaps_detected", sequence_gaps_detected},
+                {"replay_attempts_blocked", replay_attempts_blocked},
+                {"stale_packets_dropped", stale_packets_dropped},
+                {"session_rekeys_completed", session_rekeys_completed},
                 {"average_latency_ms", average_latency_ms},
                 {"peak_concurrent_connections", peak_concurrent_connections},
                 {"uptime_seconds", get_uptime_seconds()}};
@@ -108,6 +120,10 @@ namespace mita
             errors = 0;
             protocol_errors = 0;
             transport_errors = 0;
+            sequence_gaps_detected = 0;
+            replay_attempts_blocked = 0;
+            stale_packets_dropped = 0;
+            session_rekeys_completed = 0;
             average_latency_ms = 0;
             peak_concurrent_connections = 0;
             start_time = std::chrono::steady_clock::now();
@@ -220,7 +236,27 @@ namespace mita
         void StatisticsService::record_transport_error()
         {
             stats_.transport_errors++;
-            stats_.errors++;
+        }
+
+        // Security metrics (Task 4,5,6)
+        void StatisticsService::record_sequence_gap()
+        {
+            stats_.sequence_gaps_detected++;
+        }
+
+        void StatisticsService::record_replay_attempt()
+        {
+            stats_.replay_attempts_blocked++;
+        }
+
+        void StatisticsService::record_stale_packet()
+        {
+            stats_.stale_packets_dropped++;
+        }
+
+        void StatisticsService::record_session_rekey()
+        {
+            stats_.session_rekeys_completed++;
         }
 
         void StatisticsService::record_latency(uint64_t latency_ms)

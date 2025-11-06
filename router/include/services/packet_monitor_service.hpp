@@ -44,6 +44,7 @@ namespace mita
             // Decoded information
             std::string decoded_header;
             std::string decoded_payload;
+            std::string decrypted_payload; // Decrypted payload (if encrypted)
         };
 
         /**
@@ -55,8 +56,8 @@ namespace mita
             PacketMonitorService(std::shared_ptr<mita::db::Storage> storage = nullptr);
             ~PacketMonitorService();
 
-            // Capture packets
-            void capture_packet(const protocol::ProtocolPacket &packet,
+            // Capture packets (returns packet_id for later updates)
+            std::string capture_packet(const protocol::ProtocolPacket &packet,
                               const std::string &direction,
                               core::TransportType transport);
             
@@ -65,6 +66,15 @@ namespace mita
                                        const std::string &reason,
                                        const std::string &direction,
                                        core::TransportType transport);
+            
+            // Update existing packet with error information
+            bool update_packet_error(const std::string &packet_id,
+                                    const std::string &error_flags,
+                                    bool is_valid = false);
+            
+            // Update existing packet with decrypted payload
+            bool update_packet_decrypted(const std::string &packet_id,
+                                        const std::string &decrypted_payload);
 
             // Get captured packets
             std::vector<CapturedPacket> get_packets(size_t limit = 100, size_t offset = 0) const;

@@ -60,10 +60,8 @@ public:
     try {
       m_authService = std::make_shared<mita::AuthService>("data/router.db");
 
-      // Initialize settings service with the same storage
-      auto storage = std::make_shared<mita::db::Storage>(mita::db::initStorage("data/router.db"));
-      storage->sync_schema();
-      m_settingsService = std::make_shared<mita::SettingsService>(storage);
+      // FIXED: Reuse the storage from AuthService instead of creating a new connection
+      m_settingsService = std::make_shared<mita::SettingsService>(m_authService->getStorage());
     } catch (const std::exception& e) {
       printf("[ERROR] Failed to initialize authentication service: %s\n", e.what());
       throw;
@@ -99,7 +97,7 @@ public:
     auto packetsController = PacketsController::createShared(objectMapper, m_packetMonitor);
     router->addController(packetsController);
 
-    auto routingController = RoutingController::createShared(objectMapper, m_deviceManager);
+    auto routingController = RoutingController::createShared(objectMapper);
     router->addController(routingController);
 
     auto devicesController = DevicesController::createShared(objectMapper, m_wifiTransport, m_bleTransport);

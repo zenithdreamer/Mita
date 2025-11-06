@@ -113,8 +113,6 @@ namespace mita
             authenticated_ = false;
             session_crypto_.reset();
 
-            update_heartbeat();
-
             // Reinitialize handshake manager
             handshake_manager_ = std::make_unique<protocol::HandshakeManager>(
                 config_.router_id, config_.shared_secret);
@@ -123,6 +121,8 @@ namespace mita
                           core::LogContext().add("device_id", device_id_).add("new_address", client_address_str_));
 
             // Start with the HELLO packet we already received
+            // Note: Don't call update_heartbeat() before start() because it sets running_=true
+            // which would cause start() to return early without starting the handler thread
             start(hello_packet);
         }
 
@@ -210,9 +210,11 @@ namespace mita
                             {
                                 handle_data_packet(packet);
                             }
-                            else if (msg_type == MessageType::CONTROL)
+                            else if (msg_type == MessageType::CONTROL ||
+                                     msg_type == MessageType::DISCONNECT ||
+                                     msg_type == MessageType::SESSION_REKEY_REQ)
                             {
-                                // Control packets could be handled here in the future
+                                // Forward control, disconnect, and rekey packets to device management
                                 handle_data_packet(packet);
                             }
                             else
@@ -298,8 +300,8 @@ namespace mita
                     return false; // Timeout or error
                 }
 
-                // Read header first (16 bytes)
-                const size_t header_size = 16; // HEADER_SIZE from protocol
+                // Read header first (19 bytes) - increased from 18 to 19 for CRC-16 checksum
+                const size_t header_size = 19; // HEADER_SIZE from protocol
                 std::vector<uint8_t> header_data(header_size);
                 ssize_t received = recv(socket, header_data.data(), header_size, MSG_WAITALL);
                 if (received != static_cast<ssize_t>(header_size))
@@ -398,12 +400,9 @@ namespace mita
 
             if (success)
             {
-                // Capture incoming packet for monitoring (handshake or data)
-                if (packet_monitor_)
-                {
-                    packet_monitor_->capture_packet(packet, "inbound", core::TransportType::WIFI);
-                }
-
+                // Note: Packet capture moved to device_management_service for centralized handling
+                // This prevents duplicate captures and allows validation before storage
+                
                 size_t packet_size = 16 + packet.get_payload().size();
                 statistics_service_.record_transport_packet_received("wifi", packet_size);
             }
@@ -419,6 +418,12 @@ namespace mita
         {
             try
             {
+                // Capture inbound handshake packets (HELLO, AUTH)
+                if (packet_monitor_)
+                {
+                    packet_monitor_->capture_packet(packet, "inbound", core::TransportType::WIFI);
+                }
+                
                 if (packet.get_message_type() == MessageType::HELLO)
                 {
                     std::string router_id, device_id;
@@ -445,7 +450,15 @@ namespace mita
 
                             // Create challenge packet
                             auto challenge_packet = handshake_manager_->create_challenge_packet(device_id_, nonce1);
-                            if (challenge_packet && send_packet(*challenge_packet))
+                            if (!challenge_packet)
+                            {
+                                logger_->warning("Rejected HELLO - nonce reuse or security check failed",
+                                               core::LogContext().add("device_id", device_id_));
+                                running_ = false;  // Close connection
+                                return;
+                            }
+                            
+                            if (send_packet(*challenge_packet))
                             {
                                 logger_->info("Sent CHALLENGE to device",
                                               core::LogContext().add("device_id", device_id_));
@@ -520,6 +533,9 @@ namespace mita
                             // Remove handshake state as it's no longer needed
                             handshake_manager_->remove_handshake(device_id_);
 
+                            // Set transport fingerprint before authentication
+                            device_management_.set_transport_fingerprint(device_id_, client_address_str_);
+
                             // Inform device management so state moves from HANDSHAKING -> AUTHENTICATED
                             if (session_crypto_)
                             {
@@ -532,7 +548,10 @@ namespace mita
                             }
 
                             logger_->info("Device authenticated and AUTH_ACK sent",
-                                          core::LogContext().add("device_id", device_id_).add("assigned_address", assigned_address_));
+                                          core::LogContext()
+                                              .add("device_id", device_id_)
+                                              .add("assigned_address", assigned_address_)
+                                              .add("fingerprint", client_address_str_));
                         }
                         else
                         {
@@ -566,8 +585,8 @@ namespace mita
                 return;
             }
 
-            // Forward to device management service
-            device_management_.handle_packet(device_id_, packet, core::TransportType::WIFI);
+            // Forward to device management service with current fingerprint for validation
+            device_management_.handle_packet(device_id_, packet, core::TransportType::WIFI, client_address_str_);
         }
 
         void WiFiClientHandler::cleanup()

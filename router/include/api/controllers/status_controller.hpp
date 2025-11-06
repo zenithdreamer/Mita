@@ -6,6 +6,7 @@
 #include "api/dto.hpp"
 #include "services/packet_monitor_service.hpp"
 #include "services/device_management_service.hpp"
+#include "services/statistics_service.hpp"
 #include <chrono>
 #include <iomanip>
 #include <sstream>
@@ -57,12 +58,6 @@ public:
     info->addTag("Status");
   }
   ENDPOINT("GET", "/api/status", getStatus, REQUEST(std::shared_ptr<IncomingRequest>, request)) {
-    printf("[API] GET /api/status - request received from %s\n",
-           request->getHeader("User-Agent")->c_str());
-    printf("[API] Connection header from client: %s\n",
-           request->getHeader("Connection") ? request->getHeader("Connection")->c_str() : "none");
-    fflush(stdout);
-
     auto dto = StatusDto::createShared();
     dto->status = "running";
     dto->message = "Router is operational";
@@ -88,9 +83,6 @@ public:
     info->addTag("Status");
   }
   ENDPOINT("GET", "/api/status/devices", getDeviceStatus) {
-    printf("[API] GET /api/status/devices - request received\n");
-    fflush(stdout);
-
     auto dto = DashboardStatsDto::createShared();
     dto->status = "running";
 
@@ -134,9 +126,6 @@ public:
     info->addTag("Status");
   }
   ENDPOINT("GET", "/api/status/system", getSystemStatus) {
-    printf("[API] GET /api/status/system - request received\n");
-    fflush(stdout);
-
     auto dto = SystemResourcesDto::createShared();
 
     // Read memory info from /proc/meminfo (Linux)
@@ -207,9 +196,6 @@ public:
     info->addTag("Status");
   }
   ENDPOINT("GET", "/api/status/network", getNetworkStatus) {
-    printf("[API] GET /api/status/network - request received\n");
-    fflush(stdout);
-
     auto dto = NetworkStatsDto::createShared();
 
     if (m_packetMonitor) {
@@ -244,6 +230,54 @@ public:
     response->putHeader("Access-Control-Max-Age", "86400");
     response->putHeader("Connection", "close");
     return response;
+  }
+
+  ENDPOINT_INFO(getStatistics) {
+    info->summary = "Get comprehensive router statistics including security metrics";
+    info->addResponse<Object<RouterStatisticsDto>>(Status::CODE_200, "application/json");
+    info->addResponse<Object<ErrorDto>>(Status::CODE_500, "application/json");
+    info->addTag("Status");
+  }
+  ENDPOINT("GET", "/api/statistics", getStatistics) {
+    auto dto = RouterStatisticsDto::createShared();
+    
+    if (m_deviceManager) {
+      auto stats = m_deviceManager->get_statistics_snapshot();
+      
+      // Basic operational metrics (map from actual RouterStatisticsSnapshot fields)
+      dto->totalPacketsReceived = stats.packets_received;
+      dto->totalPacketsSent = stats.packets_sent;
+      dto->totalBytesReceived = stats.bytes_transferred;  // Using bytes_transferred for total
+      dto->totalBytesSent = stats.bytes_transferred;      // Same counter for both in current impl
+      dto->packetsPerSecond = 0.0;  // Calculate if needed, not in snapshot
+      
+      // Security metrics - NEW
+      dto->sequenceGapsDetected = stats.sequence_gaps_detected;
+      dto->replayAttemptsBlocked = stats.replay_attempts_blocked;
+      dto->stalePacketsDropped = stats.stale_packets_dropped;
+      dto->sessionRekeysCompleted = stats.session_rekeys_completed;
+      
+      // Device statistics (get from device manager)
+      dto->activeDevices = m_deviceManager->get_device_count();
+      dto->totalDevicesRegistered = m_deviceManager->get_device_count();  // Same for now
+      
+      // Error statistics
+      dto->authenticationFailures = stats.handshakes_failed;
+      dto->invalidPacketsReceived = stats.protocol_errors;
+      dto->droppedPackets = stats.packets_dropped;
+      
+      // Transport-specific stats - would need transport stats API
+      // For now, use 0 or derive from overall stats
+      dto->wifiPacketsReceived = static_cast<int64_t>(0);
+      dto->wifiPacketsSent = static_cast<int64_t>(0);
+      dto->blePacketsReceived = static_cast<int64_t>(0);
+      dto->blePacketsSent = static_cast<int64_t>(0);
+      
+      // Uptime
+      dto->uptimeSeconds = stats.get_uptime_seconds();
+    }
+    
+    return createDtoResponseWithCors(Status::CODE_200, dto);
   }
 };
 

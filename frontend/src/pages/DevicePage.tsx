@@ -1,32 +1,46 @@
 import { DeviceTablePage } from "@/pages/DeviceTablePage"
-
-const mockDeviceData = [
-  {
-    device_id: "1",
-    device_type: "WiFi",
-    status: "active",
-    last_seen: new Date().toISOString(),
-    rssi: 1,
-    battery_level: 50,
-  },
-  {
-    device_id: "2",
-    device_type: "BLE",
-    status: "active",
-    last_seen: new Date().toISOString(),
-    rssi: 4,
-    battery_level: 44,
-  },
-  {
-    device_id: "3",
-    device_type: "Zigbee",
-    status: "inactive",
-    last_seen: new Date(Date.now() - 3600000).toISOString(),
-    rssi: 2,
-    battery_level: 30,
-  },
-]
+import { useEffect, useState } from "react"
+import { getWifiDevices, getBleDevices } from "@/api"
+import type { DeviceDto } from "@/api/types.gen"
 
 export function DevicePage() {
-  return <DeviceTablePage data={mockDeviceData} />
+  const [devices, setDevices] = useState<DeviceDto[]>([])
+
+  useEffect(() => {
+    const fetchDevices = async () => {
+      try {
+        const [wifiResponse, bleResponse] = await Promise.all([
+          getWifiDevices(),
+          getBleDevices()
+        ])
+
+        const allDevices = [
+          ...(wifiResponse.data?.devices || []),
+          ...(bleResponse.data?.devices || [])
+        ]
+
+        setDevices(allDevices)
+      } catch (err) {
+        console.error("Error fetching devices:", err)
+      }
+    }
+
+    fetchDevices()
+    
+    const interval = setInterval(fetchDevices, 5000)
+    return () => clearInterval(interval)
+  }, [])
+
+  const transformedData = devices.map(device => ({
+    device_id: device.device_id || "unknown",
+    device_type: device.device_type || "unknown",
+    status: device.status || "unknown",
+    last_seen: device.last_seen 
+      ? new Date(device.last_seen * 1000).toISOString() 
+      : "Never",
+    rssi: device.rssi || 0,
+    battery_level: device.battery_level || 0,
+  }))
+
+  return <DeviceTablePage data={transformedData} />
 }

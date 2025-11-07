@@ -12,6 +12,15 @@ NC='\033[0m'
 echo -e "${GREEN}=== Mita Router Full Stack Startup ===${NC}"
 echo ""
 
+# Kill any existing mita_router processes to prevent zombies
+echo -e "${YELLOW}Checking for existing mita_router processes...${NC}"
+if pgrep -x mita_router >/dev/null 2>&1; then
+    echo -e "${YELLOW}Killing existing mita_router processes...${NC}"
+    sudo pkill -9 mita_router 2>/dev/null || true
+    sleep 1
+    echo -e "${GREEN}Cleaned up existing processes${NC}"
+fi
+
 # Check if port 8000 is already in use
 if lsof -Pi :8000 -sTCP:LISTEN -t >/dev/null 2>&1; then
     echo -e "${RED}Port 8000 is already in use!${NC}"
@@ -105,7 +114,11 @@ cleanup() {
     pkill -9 -f "pnpm dev" 2>/dev/null || true
     pkill -9 -f "esbuild" 2>/dev/null || true
     
-    # Kill any mita_router processes on port 8000
+    # Kill all mita_router processes to prevent zombies
+    echo -e "${YELLOW}Cleaning up mita_router processes...${NC}"
+    sudo pkill -9 mita_router 2>/dev/null || true
+    
+    # Kill any processes on port 8000
     ROUTER_PIDS=$(lsof -t -i :8000 2>/dev/null || true)
     if [ -n "$ROUTER_PIDS" ]; then
         echo -e "${YELLOW}Killing processes on port 8000...${NC}"
@@ -118,9 +131,10 @@ cleanup() {
 
 trap cleanup SIGINT SIGTERM EXIT
 
-# Start backend in background
+# Start backend in background with sudo (required for BLE management)
+echo -e "${YELLOW}Starting backend with sudo (required for BLE/WiFi management)...${NC}"
 cd router
-./run.sh "$@" &
+sudo -E ./run.sh "$@" &
 BACKEND_PID=$!
 cd ..
 

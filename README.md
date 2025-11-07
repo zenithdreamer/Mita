@@ -127,10 +127,13 @@ Combines priority level and control flags:
 Identifier for grouping packet fragments belonging to the same message. Used when FLAG_FRAGMENTED is set.
 
 #### timestamp (Bytes 15-18)
-32-bit timestamp:
-- Used for replay attack prevention
-- Packets older than 60 seconds are rejected
-- Requires time synchronization between devices
+32-bit timestamp in **milliseconds** since device boot:
+- **NOT Unix time** - uses relative time (millis() on embedded devices)
+- Wraps around every ~49 days (2^32 milliseconds)
+- Used for replay attack prevention (packets older than 60 seconds rejected)
+- **No RTC required** - works with local device uptime
+- **Wrap-around handling** - Router accounts for timestamp wrap-around
+- Does not require time synchronization between devices (relative freshness only)
 
 ### 1.4 Payload Structure
 
@@ -262,7 +265,7 @@ stateDiagram-v2
 
 #### CONNECTING
 - Device attempting to establish connection
-- Transport layer connection initiated (WiFi socket or BLE GATT)
+- Transport layer connection initiated (WiFi TCP socket or BLE L2CAP)
 - No protocol handshake yet
 
 #### HANDSHAKING
@@ -1087,33 +1090,58 @@ if (packet->get_priority_flags() & FLAG_QOS_RELIABLE) {
 
 Replay attacks involve an attacker capturing legitimate packets and retransmitting them later to gain unauthorized access or disrupt communication. MITA employs multiple layered defenses against replay attacks.
 
-### 6.1 Timestamp-Based Freshness Validation (outdated/to be implemented)
+### 6.1 Timestamp-Based Freshness Validation
 
 **Mechanism:**
-- Each DATA packet includes a 32-bit timestamp
-- Router validates timestamp is within acceptable window (60 seconds)
+- Each DATA packet includes a 32-bit timestamp field in header (milliseconds since boot)
+- Router validates timestamp is within acceptable window (60 seconds = 60,000 ms)
+- Uses **relative time** (millis()) instead of absolute Unix time
+- **No RTC Required** - works without real-time clock
+- Handles 32-bit wrap-around (occurs every ~49 days)
 
-**Configuration:**
-```c
-const uint32_t MAX_TIMESTAMP_AGE = 60;  // seconds
-
-current_time = get_current_unix_time();
-packet_age = current_time - packet.timestamp;
-
-if (packet_age > MAX_TIMESTAMP_AGE) {
-    reject_packet(STALE_TIMESTAMP);
+**Implementation:**
+```cpp
+bool validate_packet_timestamp(uint32_t timestamp) {
+    const uint32_t MAX_PACKET_AGE_MS = 60000;  // 60 seconds
+    
+    // Get current milliseconds since boot
+    uint32_t current_time = millis();
+    
+    // Calculate age with wrap-around handling
+    uint32_t age;
+    if (current_time >= timestamp) {
+        age = current_time - timestamp;
+    } else {
+        // Wrapped around (timestamp is from before the wrap)
+        age = (UINT32_MAX - timestamp) + current_time + 1;
+    }
+    
+    // Reject extremely old packets (>60 seconds)
+    if (age > MAX_PACKET_AGE_MS) {
+        send_error(STALE_TIMESTAMP);
+        return false;
+    }
+    
+    return true;
 }
 ```
 
 **Properties:**
 - **Replay Window**: Old packets (>60s) automatically rejected
-- **Clock Sync**: Requires loose time synchronization (NTP, SNTP, or manual sync)
-- **Tolerance**: 60-second window accommodates network delays and clock drift
+- **No Clock Sync Needed**: Uses relative device uptime, not absolute time
+- **Wrap-Around Safe**: Handles 32-bit counter overflow correctly
+- **Tolerant**: 60-second window accommodates network delays
 - **Attack Mitigation**: Prevents long-term replay attacks
 
+**Advantages over Unix Timestamps:**
+- Works on embedded devices without RTC (real-time clock)
+- No time synchronization overhead (NTP, SNTP)
+- No vulnerability to time-sync attacks
+- Simpler implementation on constrained devices
+
 **Limitations:**
-- Vulnerable to replay within 60-second window (mitigated by sequence numbers)
-- Requires reasonably synchronized clocks
+- Still vulnerable to replay within 60-second window (mitigated by sequence numbers)
+- Long device downtime (>49 days) causes timestamp wrap-around (handled automatically)
 
 ### 6.2 Sequence Number Sliding Window
 
@@ -2125,6 +2153,28 @@ cleanup_session();
 
 ## 12. Transport Layer Abstraction
 
+**Important Implementation Notes:**
+
+The MITA protocol use lower-level, more efficient transport mechanisms:
+
+1. **BLE Transport Architecture:** The router now uses **native Linux BlueZ L2CAP sockets** instead of GATT. This provides:
+   - Direct L2CAP connection-oriented channels
+   - Better performance and lower overhead than GATT
+   - PSM 150 for service identification
+   - 512-byte MTU for larger packet support
+   - Native socket operations (AF_BLUETOOTH, BTPROTO_L2CAP)
+
+2. **Multiple Backend Support:** The BLE transport layer includes multiple backend implementations:
+   - `BLE L2CAP Backend` - Direct L2CAP sockets (primary implementation)
+   - Legacy GATT-based backends for compatibility
+   - Modular architecture for easy backend switching
+
+3. **Router Components:**
+   - BLE Event Queue for asynchronous event processing
+   - BLE Device Registry for connection management
+   - Device Handler per connected client
+   - Event Processor for coordinated operations
+
 MITA is designed to be transport-agnostic, operating over multiple physical layers.
 
 ### 12.1 Supported Transports
@@ -2137,15 +2187,21 @@ MITA is designed to be transport-agnostic, operating over multiple physical laye
   - Greater power consumption
   - IP-based routing
 - **Fingerprint:** Socket address (IP:port)
+- **Implementation:** Direct TCP socket server on port 8080
 
 #### BLE Transport
-- **Protocol:** GATT over Bluetooth Low Energy
+- **Protocol:** L2CAP (Logical Link Control and Adaptation Protocol) over Bluetooth Low Energy
+- **PSM (Protocol Service Multiplexer):** 150
+- **MTU:** 512 bytes
 - **Characteristics:**
-  - Lower power consumption
-  - Shorter range
-  - Lower bandwidth
-  - Point-to-point
+  - Lower power consumption than WiFi
+  - Shorter range (typically 10-100 meters)
+  - Lower bandwidth than WiFi
+  - Direct L2CAP connection (not GATT-based)
+  - Connection-oriented channel
 - **Fingerprint:** BLE MAC address
+- **Implementation:** Native Linux BlueZ L2CAP sockets (AF_BLUETOOTH, SOCK_SEQPACKET, BTPROTO_L2CAP)
+- **Advertising:** Router advertises for device discovery
 
 ### 12.2 Transport Interface
 
@@ -2272,7 +2328,7 @@ graph TD
         
         PROTO["Protocol Layer<br/>HandshakeManager<br/>PacketCrypto<br/>ProtocolPacket"]
         
-        TRANS_R["Transport Layer<br/>WiFiTransport TCP:8080<br/>BLETransport GATT<br/>TransportInterface"]
+        TRANS_R["Transport Layer<br/>WiFiTransport TCP:8080<br/>BLETransport L2CAP<br/>TransportInterface"]
         
         INFRA["Infrastructure<br/>WiFiManager | DHCPServer<br/>SQLite Database"]
         
@@ -2299,3 +2355,121 @@ graph TD
     
     TRANS_C <-->|"WiFi/BLE"| TRANS_R
 ```
+
+### 14.2 Current Implementation Status
+
+#### Router (C++/Linux)
+
+**Core Services:**
+- `DeviceManagementService` - Device authentication, session management, packet routing
+- `RoutingService` - Address assignment, routing table management, packet forwarding
+- `StatisticsService` - Real-time metrics, throughput monitoring, error tracking
+- `PacketMonitorService` - Packet capture, analysis, debugging tools
+- `AuthService` - Authentication, authorization, session token management
+- `SettingsService` - Configuration management, runtime updates
+
+**REST API Endpoints:**
+- `/api/status` - Router status, uptime, memory usage
+- `/api/devices` - Device list, registration, management
+- `/api/packets` - Packet monitoring, capture, analysis
+- `/api/routing` - Routing table, forwarding rules
+- `/api/protocols` - Protocol statistics, error rates
+- `/api/settings` - Configuration management
+
+**Web Dashboard (React/TypeScript):**
+- Real-time device monitoring
+- Packet capture and analysis
+- Routing table visualization
+- Protocol statistics and metrics
+- Configuration management UI
+- Authentication and access control
+
+#### Client (ESP32/Arduino)
+
+**MITA Client Library:**
+- `MitaClient` - Main client interface, connection management
+- `CryptoService` - mbedTLS-based encryption (AES-128-GCM)
+- `MessageHandler` - Application message routing
+- `ProtocolSelector` - Automatic WiFi/BLE transport selection
+- `WiFiTransport` - TCP socket communication
+- `BLETransport` - L2CAP connection-oriented channel
+
+### 14.3 Technical Specifications
+
+#### Protocol Limits
+
+| Parameter | Value | Notes |
+|-----------|-------|-------|
+| Header Size | 19 bytes | Fixed size |
+| Max Payload Size | 256 bytes | Configurable via MAX_PAYLOAD_SIZE |
+| Total Max Packet Size | 275 bytes | Header + Payload |
+| Sequence Number Range | 0-65535 | 16-bit counter with wrap-around |
+| Timestamp Range | 0-4,294,967,295 ms | ~49 days before wrap |
+| Max TTL | 255 | Typically set to 16 |
+| Address Space | 0x0001-0xFFFE | 65,534 assignable addresses |
+
+#### Transport Specifications
+
+**WiFi Transport:**
+- Protocol: TCP
+- Port: 8000 (configurable)
+- Max Connections: 10 (configurable)
+- Default Host: 192.168.50.1
+- WiFi Channel: 6 (configurable)
+
+**BLE Transport:**
+- Protocol: L2CAP CoC (Connection-oriented Channel)
+- PSM: 150 (0x96)
+- MTU: 512 bytes
+- Max Connections: 7 (configurable)
+- Device Name: "Mita_Router"
+- Advertising: Enabled for discovery
+
+#### Security Parameters
+
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| Session Key Size | 128 bits | AES-128 |
+| HMAC Algorithm | SHA-256 | 256-bit output |
+| Nonce Size | 16 bytes | 128 bits of randomness |
+| GCM IV Size | 12 bytes | Optimal for GCM |
+| GCM Tag Size | 16 bytes | 128-bit authentication |
+| Session Lifetime | 1 hour | Configurable (3600s default) |
+| Handshake Timeout | 10 seconds | CHALLENGE to AUTH window |
+| Handshake State TTL | 30 seconds | Cleanup interval |
+| Max Handshake Attempts | 3 per 60s | Per-device rate limit |
+
+#### Performance Characteristics
+
+**Router Capacity:**
+- Max Devices: 100 (configurable)
+- Device Timeout: 300 seconds (5 minutes)
+- Cleanup Interval: 60 seconds
+- Sequence Window Size: 64 packets
+- Timestamp Freshness: 60 seconds
+
+**Rate Limiting:**
+- Per-Device Handshakes: 3 per 60 seconds
+- Global Handshakes: 50 per 60 seconds
+- Heartbeat Limit: 120 per 60 seconds per device
+
+**Memory & Storage:**
+- Packet Buffer: Dynamic allocation
+- Session State: In-memory (cleared on disconnect)
+- Device Registry: SQLite database
+- Packet Monitor: In-memory circular buffer
+
+#### Cryptographic Performance
+
+**Router (OpenSSL on Linux):**
+- AES-128-GCM: Hardware-accelerated (AES-NI when available)
+- HMAC-SHA256: Hardware-accelerated
+- Key Derivation: < 1ms per operation
+- Encryption/Decryption: < 1ms per packet
+
+**Client (mbedTLS on ESP32):**
+- AES-128-GCM: Hardware-accelerated (ESP32 crypto engine)
+- HMAC-SHA256: Hardware-accelerated
+- Key Derivation: < 5ms per operation
+- Encryption/Decryption: < 2ms per packet
+

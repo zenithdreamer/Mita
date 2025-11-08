@@ -395,11 +395,11 @@ void SDK::loop() {
     }
 }
 
-bool SDK::send(const std::string& payload) {
-    return send("DATA", payload);
+bool SDK::send(const std::string& payload, uint16_t dest_address) {
+    return send("DATA", payload, dest_address);
 }
 
-bool SDK::send(const std::string& message_type, const std::string& payload) {
+bool SDK::send(const std::string& message_type, const std::string& payload, uint16_t dest_address) {
     if (!impl_->client || !impl_->client->isConnected()) {
         SDK_LOGD(TAG, "Cannot send %s: not connected", message_type.c_str());
         impl_->triggerError("Cannot send: not connected");
@@ -419,10 +419,10 @@ bool SDK::send(const std::string& message_type, const std::string& payload) {
     std::string json_message;
     serializeJson(doc, json_message);
     
-    SDK_LOGD(TAG, "Sending %s message: %s", message_type.c_str(), json_message.c_str());
-    
-    // Use the new sendData method
-    return impl_->client->sendData(json_message);
+    SDK_LOGD(TAG, "Sending %s message to 0x%04X: %s", message_type.c_str(), dest_address, json_message.c_str());
+
+    // Use the new sendData method with explicit destination
+    return impl_->client->sendData(json_message, dest_address);
 }
 
 bool SDK::sendHeartbeat() {

@@ -336,8 +336,8 @@ bool MitaClient::sendHeartbeat()
     return transport->sendPacket(packet);
 }
 
-// send data to router
-bool MitaClient::sendData(const std::string& json_data)
+// send data to any address (default: router)
+bool MitaClient::sendData(const std::string& json_data, uint16_t dest_address)
 {
     if (!isConnected())
     {
@@ -345,8 +345,8 @@ bool MitaClient::sendData(const std::string& json_data)
         return false;
     }
 
-    ESP_LOGI(TAG, "MitaClient: Sending data (%d bytes)", json_data.length());
-    return sendEncryptedMessage(ROUTER_ADDRESS, json_data);
+    ESP_LOGI(TAG, "MitaClient: Sending data (%d bytes) to address 0x%04X", json_data.length(), dest_address);
+    return sendEncryptedMessage(dest_address, json_data);
 }
 
 bool MitaClient::sendPing()

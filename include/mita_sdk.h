@@ -149,19 +149,21 @@ public:
     void loop();
 
     /**
-     * @brief Send data to the router
+     * @brief Send data to specified address
      * @param payload Data to send (will be encrypted)
+     * @param dest_address Destination address
      * @return true if sent successfully
      */
-    bool send(const std::string& payload);
+    bool send(const std::string& payload, uint16_t dest_address);
 
     /**
-     * @brief Send data with custom message type
+     * @brief Send data with custom message type to specified address
      * @param message_type Type of message (e.g., "SENSOR_DATA", "COMMAND")
      * @param payload Message payload as JSON string or raw data
+     * @param dest_address Destination address
      * @return true if sent successfully
      */
-    bool send(const std::string& message_type, const std::string& payload);
+    bool send(const std::string& message_type, const std::string& payload, uint16_t dest_address);
 
     /**
      * @brief Send heartbeat to router

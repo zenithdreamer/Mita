@@ -105,7 +105,7 @@ public:
     std::string getDeviceId() const;
 
     // Messaging methods
-    bool sendData(const std::string& json_data);  // Send generic JSON data to router
+    bool sendData(const std::string& json_data, uint16_t dest_address);  // Send generic JSON data to any address
     bool sendHeartbeat();
     bool sendPing();  // Send PING and measure round-trip time
 

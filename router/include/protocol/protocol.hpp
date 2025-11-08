@@ -87,6 +87,9 @@ namespace mita
         // NOT for security - use GCM authentication tags for cryptographic integrity
         uint16_t compute_checksum() const;
         bool verify_checksum(uint16_t received_checksum) const;
+        
+        // Helper method for serialization without checksum (to avoid recursion)
+        std::vector<uint8_t> to_bytes_without_checksum() const;
         };
 
         /**

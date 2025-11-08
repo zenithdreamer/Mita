@@ -11,6 +11,7 @@
 #include <openssl/rand.h>
 #include "../../shared/crypto/crypto_utils.h"
 #include "../../shared/crypto/gcm_crypto.h"
+#include "../../shared/protocol/packet_utils.h"
 
 namespace mita
 {
@@ -75,69 +76,16 @@ namespace mita
         // NOTE: CRC-16 for basic transport-level integrity checking only
         // This is NOT cryptographically secure and should not be relied upon for security
         // Use AES-GCM authentication tags for cryptographic integrity protection
-        
-        // CRC-16-CCITT implementation
+
         uint16_t ProtocolPacket::compute_checksum() const
         {
-            // Build data without checksum field for CRC calculation
-            std::vector<uint8_t> data;
-            data.reserve(PACKET_HEADER_SIZE - 2 + payload_.size());
-            
-            uint8_t version_flags = (version_ << 4) | (flags_ & 0x0F);
-            
-            // Bytes 0-6 (before checksum)
-            data.push_back(version_flags);
-            data.push_back(msg_type_);
-            data.push_back((source_addr_ >> 8) & 0xFF);
-            data.push_back(source_addr_ & 0xFF);
-            data.push_back((dest_addr_ >> 8) & 0xFF);
-            data.push_back(dest_addr_ & 0xFF);
-            data.push_back(static_cast<uint8_t>(payload_.size()));
-            
-            // Skip bytes 7-8 (checksum field)
-            
-            // Bytes 9-18 (after checksum)
-            data.push_back((sequence_number_ >> 8) & 0xFF);
-            data.push_back(sequence_number_ & 0xFF);
-            data.push_back(ttl_);
-            data.push_back(priority_flags_);
-            data.push_back((fragment_id_ >> 8) & 0xFF);
-            data.push_back(fragment_id_ & 0xFF);
-            data.push_back((timestamp_ >> 24) & 0xFF);
-            data.push_back((timestamp_ >> 16) & 0xFF);
-            data.push_back((timestamp_ >> 8) & 0xFF);
-            data.push_back(timestamp_ & 0xFF);
-            
-            // Add payload bytes
-            data.insert(data.end(), payload_.begin(), payload_.end());
-            
-            // Compute CRC-16-CCITT
-            uint16_t crc = 0xFFFF;
-            for (uint8_t byte : data)
-            {
-                crc ^= (uint16_t)byte << 8;
-                for (uint8_t j = 0; j < 8; j++)
-                {
-                    if (crc & 0x8000)
-                    {
-                        crc = (crc << 1) ^ 0x1021;  // Polynomial
-                    }
-                    else
-                    {
-                        crc = crc << 1;
-                    }
-                }
-            }
-            
-            return crc;
+            // Serialize to temporary buffer to compute checksum
+            std::vector<uint8_t> serialized = to_bytes_without_checksum();
+            return PacketUtils::computeChecksumFromBuffer(serialized.data(), serialized.size());
         }
 
-        bool ProtocolPacket::verify_checksum(uint16_t received_checksum) const
-        {
-            return compute_checksum() == received_checksum;
-        }
-
-        std::vector<uint8_t> ProtocolPacket::to_bytes() const
+        // Helper method to serialize without computing checksum (to avoid recursion)
+        std::vector<uint8_t> ProtocolPacket::to_bytes_without_checksum() const
         {
             std::vector<uint8_t> data(PACKET_HEADER_SIZE + payload_.size());
 
@@ -151,9 +99,9 @@ namespace mita
             data[5] = dest_addr_ & 0xFF;
             data[6] = static_cast<uint8_t>(payload_.size());
             
-            uint16_t crc = compute_checksum();
-            data[7] = (crc >> 8) & 0xFF;  // CRC-16 high byte
-            data[8] = crc & 0xFF;          // CRC-16 low byte
+            // Checksum bytes 7-8 set to 0 for checksum computation
+            data[7] = 0;
+            data[8] = 0;
             
             data[9] = (sequence_number_ >> 8) & 0xFF;
             data[10] = sequence_number_ & 0xFF;
@@ -167,6 +115,23 @@ namespace mita
             data[18] = timestamp_ & 0xFF;
 
             std::copy(payload_.begin(), payload_.end(), data.begin() + PACKET_HEADER_SIZE);
+
+            return data;
+        }
+
+        bool ProtocolPacket::verify_checksum(uint16_t received_checksum) const
+        {
+            return compute_checksum() == received_checksum;
+        }
+
+        std::vector<uint8_t> ProtocolPacket::to_bytes() const
+        {
+            std::vector<uint8_t> data = to_bytes_without_checksum();
+            
+            // Compute CRC using shared utility
+            uint16_t crc = PacketUtils::computeChecksumFromBuffer(data.data(), data.size());
+            data[7] = (crc >> 8) & 0xFF;  // CRC-16 high byte
+            data[8] = crc & 0xFF;          // CRC-16 low byte
 
             return data;
         }

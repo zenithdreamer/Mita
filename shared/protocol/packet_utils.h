@@ -3,7 +3,10 @@
 
 #include "protocol_types.h"
 #include <string.h>
+
+#if !defined(ESP_PLATFORM) && !defined(ARDUINO)
 #include <vector>
+#endif
 
 class PacketUtils {
 public:
@@ -37,20 +40,22 @@ public:
         
         // Create temporary buffer without checksum field for CRC calculation
         // Copy bytes 0-6 (before checksum at bytes 7-8) and bytes 9 onwards
-        std::vector<uint8_t> temp_buffer;
-        temp_buffer.reserve(length - 2);
+        uint8_t* temp_buffer = new uint8_t[length - 2];
         
         // Bytes 0-6 (before checksum)
-        temp_buffer.insert(temp_buffer.end(), buffer, buffer + 7);
+        memcpy(temp_buffer, buffer, 7);
         
         // Skip bytes 7-8 (checksum field)
         
         // Bytes 9 to end (after checksum: rest of header + payload)
         if (length > 9) {
-            temp_buffer.insert(temp_buffer.end(), buffer + 9, buffer + length);
+            memcpy(temp_buffer + 7, buffer + 9, length - 9);
         }
         
-        return computeCRC16(temp_buffer.data(), temp_buffer.size());
+        uint16_t crc = computeCRC16(temp_buffer, length - 2);
+        delete[] temp_buffer;
+        
+        return crc;
     }
 
     static void serializePacket(const BasicProtocolPacket& packet, uint8_t* buffer, size_t& length) {
@@ -123,6 +128,19 @@ public:
 
         return true;
     }
+
+#if !defined(ESP_PLATFORM) && !defined(ARDUINO)
+    // C++ std::vector overloads for router use
+    static void serializePacket(const BasicProtocolPacket& packet, std::vector<uint8_t>& buffer) {
+        buffer.resize(HEADER_SIZE + packet.payload_length);
+        size_t length;
+        serializePacket(packet, buffer.data(), length);
+    }
+
+    static bool deserializePacket(const std::vector<uint8_t>& buffer, BasicProtocolPacket& packet) {
+        return deserializePacket(buffer.data(), buffer.size(), packet);
+    }
+#endif
 };
 
 #endif // PACKET_UTILS_H

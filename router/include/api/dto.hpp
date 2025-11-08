@@ -301,6 +301,26 @@ class DeviceDto : public oatpp::DTO {
   DTO_FIELD(Int64, last_seen);
   DTO_FIELD(Int32, rssi);
   DTO_FIELD(Int32, battery_level);
+  
+  DTO_FIELD_INFO(address) {
+    info->description = "Device assigned address (e.g., 0x0001)";
+  }
+  DTO_FIELD(String, address);
+  
+  DTO_FIELD_INFO(transport) {
+    info->description = "Transport type";
+  }
+  DTO_FIELD(String, transport);
+  
+  DTO_FIELD_INFO(connected_time) {
+    info->description = "Unix timestamp when device connected";
+  }
+  DTO_FIELD(Int64, connected_time);
+  
+  DTO_FIELD_INFO(connection_duration) {
+    info->description = "Connection duration in seconds";
+  }
+  DTO_FIELD(Int64, connection_duration);
 };
 
 class DevicesDto : public oatpp::DTO {

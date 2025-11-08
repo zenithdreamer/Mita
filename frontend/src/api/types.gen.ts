@@ -26,6 +26,22 @@ export type DeviceDto = {
     last_seen?: number;
     rssi?: number;
     battery_level?: number;
+    /**
+     * Device assigned address (e.g., 0x0001)
+     */
+    address?: string;
+    /**
+     * Transport type
+     */
+    transport?: string;
+    /**
+     * Unix timestamp when device connected
+     */
+    connected_time?: number;
+    /**
+     * Connection duration in seconds
+     */
+    connection_duration?: number;
 };
 
 export type DashboardStatsDto = {

@@ -3,6 +3,26 @@ import { useEffect, useState } from "react"
 import { getWifiDevices, getBleDevices } from "@/api"
 import type { DeviceDto } from "@/api/types.gen"
 
+function formatLastSeen(timestamp: number | undefined): string {
+  if (!timestamp) return "Never";
+  
+  const now = Math.floor(Date.now() / 1000);
+  const secondsAgo = now - timestamp;
+  
+  if (secondsAgo < 5) return "Just now";
+  if (secondsAgo < 60) return `${secondsAgo}s ago`;
+  if (secondsAgo < 3600) {
+    const minutes = Math.floor(secondsAgo / 60);
+    return `${minutes}m ago`;
+  }
+  if (secondsAgo < 86400) {
+    const hours = Math.floor(secondsAgo / 3600);
+    return `${hours}h ago`;
+  }
+  const days = Math.floor(secondsAgo / 86400);
+  return `${days}d ago`;
+}
+
 export function DevicePage() {
   const [devices, setDevices] = useState<DeviceDto[]>([])
 
@@ -35,11 +55,12 @@ export function DevicePage() {
     device_id: device.device_id || "unknown",
     device_type: device.device_type || "unknown",
     status: device.status || "unknown",
-    last_seen: device.last_seen 
-      ? new Date(device.last_seen * 1000).toISOString() 
-      : "Never",
+    last_seen: formatLastSeen(device.last_seen),
     rssi: device.rssi || 0,
     battery_level: device.battery_level || 0,
+    address: device.address,
+    transport: device.transport,
+    connection_duration: device.connection_duration,
   }))
 
   return <DeviceTablePage data={transformedData} />

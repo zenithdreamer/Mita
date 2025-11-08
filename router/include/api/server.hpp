@@ -100,7 +100,7 @@ public:
     auto routingController = RoutingController::createShared(objectMapper);
     router->addController(routingController);
 
-    auto devicesController = DevicesController::createShared(objectMapper, m_wifiTransport, m_bleTransport);
+    auto devicesController = DevicesController::createShared(objectMapper, m_wifiTransport, m_bleTransport, m_deviceManager);
     router->addController(devicesController);
 
     auto protocolsController = ProtocolsController::createShared(objectMapper, m_deviceManager);

@@ -687,7 +687,7 @@ namespace mita
                 // name + flags 0x06 (LE General Disc. + BR/EDR not supported)
                 // If an instance already exists, BlueZ returns non-zero; we'll ignore and continue.
                 run_cmd("sudo btmgmt -i 0 add-adv -d -p 200 "
-                        "flags 0x06 name 'MITA-ROUTER'",
+                        "flags 0x06 name '" + config_.ble.device_name + "'",
                         logger_, /*ok_min*/ INT_MIN);
 
                 // As a belt-and-suspenders, also set an agent that accepts Just Works w/out prompts.
@@ -698,7 +698,7 @@ namespace mita
                     "default-agent\n"
                     "pairable on\n"
                     "discoverable on\n"
-                    "system-alias MITA-ROUTER\n"
+                    "system-alias " + config_.ble.device_name + "\n"
                     "EOF\"",
                     logger_);
 

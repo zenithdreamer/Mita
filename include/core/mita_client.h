@@ -42,10 +42,15 @@ private:
 
     // Timing
     unsigned long last_heartbeat;
-    unsigned long last_sensor_reading;
     unsigned long last_ping_sent;      // For measuring RTT
+    unsigned long last_reconnect_attempt;  // For auto-reconnect
     static const unsigned long HEARTBEAT_INTERVAL = 10000;
-    static const unsigned long SENSOR_INTERVAL = 10000;
+
+    // Auto-reconnect settings
+    bool auto_reconnect_enabled;
+    unsigned long reconnect_interval_ms;
+    ProtocolSelector* saved_protocol_selector;  // Saved for reconnection
+    std::string saved_shared_secret;            // Saved for reconnection
 
     // Timestamp validation state (instance variables)
     uint64_t challenge_baseline_timestamp;
@@ -79,7 +84,6 @@ private:
     bool waitForAck(uint16_t expected_sequence);
 
     // Utility methods
-    std::string generateSensorData();
     void printConnectionStatus();
 
 public:
@@ -101,8 +105,8 @@ public:
     std::string getDeviceId() const;
 
     // Messaging methods
+    bool sendData(const std::string& json_data);  // Send generic JSON data to router
     bool sendHeartbeat();
-    bool sendSensorData();
     bool sendPing();  // Send PING and measure round-trip time
 
     // Configuration
@@ -110,6 +114,8 @@ public:
     bool addMessageHandler(IMessageHandler *handler);
     void setQoSLevel(QoSLevel level);
     QoSLevel getQoSLevel() const;
+    void setAutoReconnect(bool enable, unsigned long interval_ms = 5000);
+    bool getAutoReconnectEnabled() const;
 };
 
 #endif // MITA_CLIENT_H

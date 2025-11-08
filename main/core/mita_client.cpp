@@ -16,9 +16,13 @@ MitaClient::MitaClient(const NetworkConfig &config)
     : transport(nullptr), network_config(config),
       assigned_address(UNASSIGNED_ADDRESS), handshake_completed(false),
       packets_sent(0),  // Initialize packet counter for session rekey
-      last_heartbeat(0), last_sensor_reading(0), last_ping_sent(0),
+      last_heartbeat(0), last_ping_sent(0),
+      last_reconnect_attempt(0),
+      auto_reconnect_enabled(true),   // Auto-reconnect enabled by default
+      reconnect_interval_ms(5000),    // Default 5 second reconnect interval
+      saved_protocol_selector(nullptr),
       challenge_baseline_timestamp(0), challenge_baseline_millis(0),
-      qos_level(QoSLevel::WITH_ACK)  // Default to QoS with ACK
+      qos_level(QoSLevel::WITH_ACK)   // Default to QoS with ACK
 {
     // Initialize nonce arrays to zero
     memset(nonce1, 0, NONCE_SIZE);
@@ -132,6 +136,10 @@ bool MitaClient::connectToNetworkSmart(ProtocolSelector* selector, const std::st
         ESP_LOGI(TAG, "%s", "MitaClient: No protocol selector provided");
         return false;
     }
+
+    // Save for auto-reconnect
+    saved_protocol_selector = selector;
+    saved_shared_secret = shared_secret;
 
     ESP_LOGI(TAG, "%s", "MitaClient: Starting smart protocol selection...");
 
@@ -253,12 +261,27 @@ void MitaClient::disconnect(DisconnectReason reason)
 
 void MitaClient::update()
 {
+    unsigned long current_time = ((unsigned long)(esp_timer_get_time() / 1000ULL));
+
+    // Auto-reconnect if enabled and disconnected
     if (!isConnected())
     {
+        if (auto_reconnect_enabled && saved_protocol_selector)
+        {
+            if (current_time - last_reconnect_attempt >= reconnect_interval_ms)
+            {
+                ESP_LOGI(TAG, "%s", "MitaClient: Auto-reconnecting...");
+                
+                if (connectToNetworkSmart(saved_protocol_selector, saved_shared_secret))
+                {
+                    ESP_LOGI(TAG, "MitaClient: Auto-reconnected! Address: 0x%04X", assigned_address);
+                }
+                
+                last_reconnect_attempt = current_time;
+            }
+        }
         return;
     }
-
-    unsigned long current_time = ((unsigned long)(esp_timer_get_time() / 1000ULL));
 
     // Handle incoming messages
     handleIncomingMessages();
@@ -270,12 +293,7 @@ void MitaClient::update()
         last_heartbeat = current_time;
     }
 
-    // Send sensor data
-    if (current_time - last_sensor_reading >= SENSOR_INTERVAL)
-    {
-        sendSensorData();
-        last_sensor_reading = current_time;
-    }
+    // Note: Sensor data sending removed - user should call sendData() in their app
 }
 
 bool MitaClient::isConnected() const
@@ -319,12 +337,16 @@ bool MitaClient::sendHeartbeat()
 }
 
 // send data to router
-bool MitaClient::sendSensorData()
+bool MitaClient::sendData(const std::string& json_data)
 {
-    std::string sensor_data = generateSensorData();
+    if (!isConnected())
+    {
+        ESP_LOGW(TAG, "%s", "MitaClient: Cannot send data - not connected");
+        return false;
+    }
 
-    ESP_LOGI(TAG, "MitaClient: Sending sensor data (%d bytes)\n", sensor_data.length());
-    return sendEncryptedMessage(ROUTER_ADDRESS, sensor_data);
+    ESP_LOGI(TAG, "MitaClient: Sending data (%d bytes)", json_data.length());
+    return sendEncryptedMessage(ROUTER_ADDRESS, json_data);
 }
 
 bool MitaClient::sendPing()
@@ -355,23 +377,6 @@ bool MitaClient::sendPing()
     ESP_LOGI(TAG, "MitaClient: Sending PING (time=%lu)\n", ping_time);
     return transport->sendPacket(packet);
 }
-
-// test send data to another esp via router
-//  bool MitaClient::sendSensorData()
-//  {
-//      if (network_config.device_id != "ESP32_Sensor_001")
-//      {
-//          ESP_LOGI(TAG, "%s", "MitaClient: This device doesn't send sensor data");
-//          return true;
-//      }
-
-//     std::string sensor_data = generateSensorData();
-
-//     uint16_t target_address = 2;
-
-//     ESP_LOGI(TAG, "MitaClient: Sending sensor data to ESP32_Sensor_002 (address 0x%04X) (%d bytes)\n", target_address, sensor_data.length());
-//     return sendEncryptedMessage(target_address, sensor_data);
-// }
 
 void MitaClient::setNetworkConfig(const NetworkConfig &config)
 {
@@ -847,23 +852,6 @@ bool MitaClient::sendEncryptedMessage(uint16_t dest_addr, const std::string &mes
     return sendEncryptedMessageWithQoS(dest_addr, message, qos_level);
 }
 
-std::string MitaClient::generateSensorData()
-{
-    DynamicJsonDocument doc(256);
-    doc["type"] = "sensor_data";
-    doc["device_id"] = network_config.device_id;
-    doc["timestamp"] = ((unsigned long)(esp_timer_get_time() / 1000ULL));
-
-    doc["temperature"] = 20.0 + ((esp_random() % 200) / 10.0);
-    doc["humidity"] = 40.0 + ((esp_random() % 400) / 10.0);
-    doc["pressure"] = 1000.0 + ((esp_random() % 100) / 10.0);
-    doc["light"] = esp_random() % 1024;
-
-    std::string result;
-    serializeJson(doc, result);
-    return result;
-}
-
 void MitaClient::setQoSLevel(QoSLevel level)
 {
     qos_level = level;
@@ -1086,7 +1074,7 @@ bool MitaClient::waitForAck(uint16_t expected_sequence)
     }
 
     unsigned long total_wait = ((unsigned long)(esp_timer_get_time() / 1000ULL)) - start_time;
-    ESP_LOGI(TAG, "MitaClient: ✗ ACK TIMEOUT for sequence %d (waited %lu ms, %u receive checks, no ACK received)\n", 
+    ESP_LOGI(TAG, "MitaClient: ACK TIMEOUT for sequence %d (waited %lu ms, %u receive checks, no ACK received)\n", 
                   expected_sequence, total_wait, check_count);
     ESP_LOGI(TAG, "MitaClient: Router may not be sending ACK or transport layer issue detected\n");
     return false;
@@ -1320,4 +1308,17 @@ bool MitaClient::performSessionRekey()
     
     ESP_LOGI(TAG, "%s", "MitaClient: SESSION_REKEY_ACK timeout");
     return false;
+}
+
+void MitaClient::setAutoReconnect(bool enable, unsigned long interval_ms)
+{
+    auto_reconnect_enabled = enable;
+    reconnect_interval_ms = interval_ms;
+    ESP_LOGI(TAG, "MitaClient: Auto-reconnect %s (interval: %lu ms)", 
+             enable ? "enabled" : "disabled", interval_ms);
+}
+
+bool MitaClient::getAutoReconnectEnabled() const
+{
+    return auto_reconnect_enabled;
 }

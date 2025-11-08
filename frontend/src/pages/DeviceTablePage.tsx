@@ -19,7 +19,7 @@ export function DeviceTablePage({ data, onNavigateToPackets }: DeviceTablePagePr
     return (
         <div className="DeviceTablePage p-4">
             <div className="flex justify-between items-center mb-4">
-                <h2 className="text-2xl font-bold">Connected Devices</h2>
+                <h2 className="text-2xl font-bold">Devices</h2>
                 {onNavigateToPackets && (
                     <button
                         onClick={onNavigateToPackets}

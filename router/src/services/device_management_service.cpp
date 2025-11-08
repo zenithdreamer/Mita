@@ -524,7 +524,15 @@ namespace mita
         size_t DeviceManagementService::get_device_count() const
         {
             std::shared_lock<std::shared_mutex> lock(devices_mutex_);
-            return managed_devices_.size();
+            size_t count = 0;
+            for (const auto &[id, device] : managed_devices_)
+            {
+                if (device.state == DeviceState::ACTIVE || device.state == DeviceState::AUTHENTICATED)
+                {
+                    count++;
+                }
+            }
+            return count;
         }
 
         size_t DeviceManagementService::get_device_count_by_transport(core::TransportType transport) const

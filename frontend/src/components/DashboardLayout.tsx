@@ -20,8 +20,8 @@ import { useAuth } from "@/contexts/AuthContext"
 
 const navigation = [
   { name: "Dashboard", href: "/", icon: LayoutDashboard },
-  { name: "Routing Table", href: "/routing", icon: Network },
-  { name: "Device Table", href: "/devices", icon: Wifi },
+  // { name: "Routing Table", href: "/routing", icon: Network }, // Hidden for now
+  { name: "Devices", href: "/devices", icon: Wifi },
   { name: "Packet Monitor", href: "/packets", icon: Activity },
   { name: "Protocols", href: "/protocols", icon: Radio },
   { name: "Settings", href: "/settings", icon: Settings },

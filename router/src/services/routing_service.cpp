@@ -12,7 +12,7 @@ namespace mita
     {
 
         RoutingService::RoutingService(const core::RoutingConfig &config)
-            : config_(config), logger_(core::get_logger("RoutingService")), next_address_(MIN_CLIENT_ADDRESS), packet_monitor_(nullptr)
+            : config_(config), logger_(core::get_logger("RoutingService")), packet_monitor_(nullptr)
         {
 
             logger_->info("Routing service initialized",
@@ -50,7 +50,6 @@ namespace mita
                 routing_table_.clear();
                 device_to_address_.clear();
                 allocated_addresses_.clear();
-                next_address_ = MIN_CLIENT_ADDRESS;
             }
 
             logger_->info("Routing service stopped");
@@ -406,32 +405,14 @@ namespace mita
 
         uint16_t RoutingService::find_free_address()
         {
-            // Start from next_address_ and wrap around
-            uint16_t start_address = next_address_;
-
-            do
+            // Always find the lowest available address
+            for (uint16_t address = MIN_CLIENT_ADDRESS; address <= MAX_CLIENT_ADDRESS; address++)
             {
-                if (allocated_addresses_.find(next_address_) == allocated_addresses_.end())
+                if (allocated_addresses_.find(address) == allocated_addresses_.end())
                 {
-                    uint16_t result = next_address_;
-
-                    // Advance for next allocation
-                    next_address_++;
-                    if (next_address_ > MAX_CLIENT_ADDRESS)
-                    {
-                        next_address_ = MIN_CLIENT_ADDRESS;
-                    }
-
-                    return result;
+                    return address;
                 }
-
-                next_address_++;
-                if (next_address_ > MAX_CLIENT_ADDRESS)
-                {
-                    next_address_ = MIN_CLIENT_ADDRESS;
-                }
-
-            } while (next_address_ != start_address);
+            }
 
             return 0; // No free address found
         }

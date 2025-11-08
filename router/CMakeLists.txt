@@ -57,6 +57,9 @@ file(GLOB_RECURSE SERVICE_SOURCES "src/services/*.cpp")
 file(GLOB_RECURSE INFRASTRUCTURE_SOURCES "src/infrastructure/*.cpp")
 file(GLOB_RECURSE PROTOCOL_SOURCES "src/protocol/*.cpp")
 
+# Shared crypto sources (for router)
+file(GLOB SHARED_CRYPTO_SOURCES "../shared/crypto/*.cpp")
+
 # Transport sources (conditional)
 set(TRANSPORT_SOURCES "")
 file(GLOB WIFI_SOURCES "src/transports/wifi_*.cpp")
@@ -125,6 +128,7 @@ add_executable(mita_router
     ${TRANSPORT_SOURCES}
     ${INFRASTRUCTURE_SOURCES}
     ${PROTOCOL_SOURCES}
+    ${SHARED_CRYPTO_SOURCES}
 )
 
 # Provide fmt dependency if not already available (SimpleBluez / SimpleDBus requires <fmt/core.h>)

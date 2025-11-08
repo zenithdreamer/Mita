@@ -9,7 +9,8 @@
 #include <openssl/aes.h>
 #include <openssl/hmac.h>
 #include <openssl/rand.h>
-#include <openssl/crypto.h>
+#include "../../shared/crypto/crypto_utils.h"
+#include "../../shared/crypto/gcm_crypto.h"
 
 namespace mita
 {
@@ -359,18 +360,12 @@ namespace mita
 
             std::vector<uint8_t> compute_hmac(const std::vector<uint8_t> &data)
             {
-                unsigned int hmac_len;
-                std::vector<uint8_t> hmac(EVP_MAX_MD_SIZE);
-
-                unsigned char *result = HMAC(EVP_sha256(), session_key_.data(), session_key_.size(),
-                                             data.data(), data.size(), hmac.data(), &hmac_len);
-
-                if (!result)
+                std::vector<uint8_t> hmac(HMAC_SIZE);
+                if (!mita::crypto::computeHMAC(session_key_.data(), session_key_.size(),
+                                               data.data(), data.size(), hmac.data()))
                 {
                     throw std::runtime_error("Failed to compute HMAC");
                 }
-
-                hmac.resize(hmac_len);
                 return hmac;
             }
 
@@ -384,7 +379,7 @@ namespace mita
                 }
 
                 // Use constant-time comparison to prevent timing attacks
-                return CRYPTO_memcmp(computed_hmac.data(), hmac.data(), hmac.size()) == 0;
+                return mita::crypto::constantTimeCompare(computed_hmac.data(), hmac.data(), hmac.size()) == 0;
             }
 
         private:
@@ -394,21 +389,13 @@ namespace mita
         // Key derivation helper (HKDF-like)
         std::vector<uint8_t> PacketCrypto::derive_subkey(const std::vector<uint8_t> &key, const std::vector<uint8_t> &info)
         {
-            unsigned int hmac_len;
-            std::vector<uint8_t> derived(EVP_MAX_MD_SIZE);
-            
-            unsigned char *result = HMAC(EVP_sha256(),
-                                        key.data(), key.size(),
-                                        info.data(), info.size(),
-                                        derived.data(), &hmac_len);
-            
-            if (!result)
+            std::vector<uint8_t> subkey(SESSION_KEY_SIZE);
+            if (!mita::crypto::deriveSubkey(key.data(), key.size(), 
+                                           info.data(), info.size(), subkey.data()))
             {
                 throw std::runtime_error("Failed to derive subkey");
             }
-            
-            derived.resize(16);  // Use first 16 bytes for AES-128
-            return derived;
+            return subkey;
         }
 
         PacketCrypto::PacketCrypto(const std::vector<uint8_t> &session_key)
@@ -453,26 +440,16 @@ namespace mita
         // Session key rotation for forward secrecy
         void PacketCrypto::rekey(const std::vector<uint8_t> &nonce3, const std::vector<uint8_t> &nonce4)
         {
-            // Derive new session key: HMAC-SHA256(old_session_key, nonce3 || nonce4)
-            std::vector<uint8_t> nonce_data;
-            nonce_data.insert(nonce_data.end(), nonce3.begin(), nonce3.end());
-            nonce_data.insert(nonce_data.end(), nonce4.begin(), nonce4.end());
-            
-            unsigned int hmac_len;
-            std::vector<uint8_t> new_session_key(EVP_MAX_MD_SIZE);
-            
-            unsigned char *result = HMAC(EVP_sha256(),
-                                         session_key_.data(), session_key_.size(),
-                                         nonce_data.data(), nonce_data.size(),
-                                         new_session_key.data(), &hmac_len);
-            
-            if (!result)
+            // Derive new session key using shared crypto utils
+            std::vector<uint8_t> new_session_key(SESSION_KEY_SIZE);
+            if (!mita::crypto::rekeySession(session_key_.data(), 
+                                           nonce3.data(), nonce4.data(), 
+                                           new_session_key.data()))
             {
                 throw std::runtime_error("Failed to derive new session key during rekey");
             }
             
-            // Update session key (first 16 bytes for AES-128)
-            new_session_key.resize(SESSION_KEY_SIZE);
+            // Update session key
             session_key_ = new_session_key;
             
             // Re-derive encryption and MAC keys from new session key
@@ -567,102 +544,25 @@ namespace mita
                 return {};
             }
 
-            // Generate 12-byte IV using counter (prevents IV reuse)
-            // Format: session_salt (4 bytes) || counter (8 bytes)
-            // This guarantees no IV reuse as long as counter doesn't overflow
-            std::vector<uint8_t> iv(12);
-            std::memcpy(iv.data(), &session_salt_, 4);
-            uint64_t current_counter = iv_counter_.fetch_add(1);
-            std::memcpy(iv.data() + 4, &current_counter, 8);
+            std::vector<uint8_t> output(plaintext.size() + 28);
+            size_t output_len;
             
-            // Check for counter overflow (extremely unlikely: 2^64 encryptions)
-            if (current_counter == UINT64_MAX)
+            uint64_t counter_value = iv_counter_.load();
+
+            if (!mita::crypto::encryptGCM(
+                    encryption_key_.data(), session_salt_, counter_value,
+                    plaintext.data(), plaintext.size(),
+                    additional_data.empty() ? nullptr : additional_data.data(),
+                    additional_data.size(),
+                    output.data(), output_len))
             {
-                auto logger = core::get_logger("Protocol");
-                if (logger)
-                {
-                    logger->warning("IV counter overflow - session should be rekeyed");
-                }
+                throw std::runtime_error("Failed to encrypt with GCM");
             }
+            
+            iv_counter_.store(counter_value);
 
-            // Create cipher context
-            EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
-            if (!ctx)
-            {
-                throw std::runtime_error("Failed to create cipher context for GCM");
-            }
-
-            // Initialize encryption with AES-128-GCM
-            if (EVP_EncryptInit_ex(ctx, EVP_aes_128_gcm(), nullptr, nullptr, nullptr) != 1)
-            {
-                EVP_CIPHER_CTX_free(ctx);
-                throw std::runtime_error("Failed to initialize GCM encryption");
-            }
-
-            // Set IV length (12 bytes is optimal for GCM)
-            if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, 12, nullptr) != 1)
-            {
-                EVP_CIPHER_CTX_free(ctx);
-                throw std::runtime_error("Failed to set GCM IV length");
-            }
-
-            // Set key and IV
-            if (EVP_EncryptInit_ex(ctx, nullptr, nullptr, encryption_key_.data(), iv.data()) != 1)
-            {
-                EVP_CIPHER_CTX_free(ctx);
-                throw std::runtime_error("Failed to set GCM key and IV");
-            }
-
-            // Add Additional Authenticated Data (AAD) if provided
-            // AAD is authenticated but not encrypted (useful for packet headers)
-            int len;
-            if (!additional_data.empty())
-            {
-                if (EVP_EncryptUpdate(ctx, nullptr, &len, additional_data.data(), 
-                                      static_cast<int>(additional_data.size())) != 1)
-                {
-                    EVP_CIPHER_CTX_free(ctx);
-                    throw std::runtime_error("Failed to set GCM AAD");
-                }
-            }
-
-            // Encrypt plaintext
-            std::vector<uint8_t> ciphertext(plaintext.size() + 16);  // +16 for potential padding
-            if (EVP_EncryptUpdate(ctx, ciphertext.data(), &len, plaintext.data(), 
-                                  static_cast<int>(plaintext.size())) != 1)
-            {
-                EVP_CIPHER_CTX_free(ctx);
-                throw std::runtime_error("Failed to encrypt data with GCM");
-            }
-            int ciphertext_len = len;
-
-            // Finalize encryption
-            if (EVP_EncryptFinal_ex(ctx, ciphertext.data() + len, &len) != 1)
-            {
-                EVP_CIPHER_CTX_free(ctx);
-                throw std::runtime_error("Failed to finalize GCM encryption");
-            }
-            ciphertext_len += len;
-            ciphertext.resize(ciphertext_len);
-
-            // Get the authentication tag (16 bytes for GCM)
-            std::vector<uint8_t> tag(16);
-            if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_GET_TAG, 16, tag.data()) != 1)
-            {
-                EVP_CIPHER_CTX_free(ctx);
-                throw std::runtime_error("Failed to get GCM authentication tag");
-            }
-
-            EVP_CIPHER_CTX_free(ctx);
-
-            // Return: IV (12 bytes) || ciphertext || tag (16 bytes)
-            std::vector<uint8_t> result;
-            result.reserve(12 + ciphertext.size() + 16);
-            result.insert(result.end(), iv.begin(), iv.end());
-            result.insert(result.end(), ciphertext.begin(), ciphertext.end());
-            result.insert(result.end(), tag.begin(), tag.end());
-
-            return result;
+            output.resize(output_len);
+            return output;
         }
 
         std::vector<uint8_t> PacketCrypto::decrypt_gcm(const std::vector<uint8_t> &data,
@@ -674,85 +574,20 @@ namespace mita
                 throw std::invalid_argument("Data too short for GCM decryption");
             }
 
-            // Extract IV (12 bytes)
-            std::vector<uint8_t> iv(data.begin(), data.begin() + 12);
+            std::vector<uint8_t> plaintext(data.size() - 28); // Remove IV and tag
+            size_t plaintext_len;
 
-            // Extract tag (last 16 bytes)
-            std::vector<uint8_t> tag(data.end() - 16, data.end());
-
-            // Extract ciphertext (everything between IV and tag)
-            std::vector<uint8_t> ciphertext(data.begin() + 12, data.end() - 16);
-
-            // Create cipher context
-            EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
-            if (!ctx)
-            {
-                throw std::runtime_error("Failed to create cipher context for GCM decryption");
-            }
-
-            // Initialize decryption with AES-128-GCM
-            if (EVP_DecryptInit_ex(ctx, EVP_aes_128_gcm(), nullptr, nullptr, nullptr) != 1)
-            {
-                EVP_CIPHER_CTX_free(ctx);
-                throw std::runtime_error("Failed to initialize GCM decryption");
-            }
-
-            // Set IV length
-            if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, 12, nullptr) != 1)
-            {
-                EVP_CIPHER_CTX_free(ctx);
-                throw std::runtime_error("Failed to set GCM IV length for decryption");
-            }
-
-            // Set key and IV
-            if (EVP_DecryptInit_ex(ctx, nullptr, nullptr, encryption_key_.data(), iv.data()) != 1)
-            {
-                EVP_CIPHER_CTX_free(ctx);
-                throw std::runtime_error("Failed to set GCM key and IV for decryption");
-            }
-
-            // Add Additional Authenticated Data (AAD) if provided
-            int len;
-            if (!additional_data.empty())
-            {
-                if (EVP_DecryptUpdate(ctx, nullptr, &len, additional_data.data(), 
-                                      static_cast<int>(additional_data.size())) != 1)
-                {
-                    EVP_CIPHER_CTX_free(ctx);
-                    throw std::runtime_error("Failed to set GCM AAD for decryption");
-                }
-            }
-
-            // Decrypt ciphertext
-            std::vector<uint8_t> plaintext(ciphertext.size());
-            if (EVP_DecryptUpdate(ctx, plaintext.data(), &len, ciphertext.data(), 
-                                  static_cast<int>(ciphertext.size())) != 1)
-            {
-                EVP_CIPHER_CTX_free(ctx);
-                throw std::runtime_error("Failed to decrypt data with GCM");
-            }
-            int plaintext_len = len;
-
-            // Set expected tag value
-            if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_TAG, 16, tag.data()) != 1)
-            {
-                EVP_CIPHER_CTX_free(ctx);
-                throw std::runtime_error("Failed to set GCM tag for verification");
-            }
-
-            // Finalize decryption and verify tag
-            // This will fail if the tag doesn't match (authentication failure)
-            int ret = EVP_DecryptFinal_ex(ctx, plaintext.data() + len, &len);
-            EVP_CIPHER_CTX_free(ctx);
-
-            if (ret != 1)
+            if (!mita::crypto::decryptGCM(
+                    encryption_key_.data(),
+                    data.data(), data.size(),
+                    additional_data.empty() ? nullptr : additional_data.data(),
+                    additional_data.size(),
+                    plaintext.data(), plaintext_len))
             {
                 throw std::runtime_error("GCM authentication failed - data may have been tampered with");
             }
 
-            plaintext_len += len;
             plaintext.resize(plaintext_len);
-
             return plaintext;
         }
 
@@ -765,26 +600,15 @@ namespace mita
         std::vector<uint8_t> derive_device_psk(const std::vector<uint8_t> &master_secret, 
                                               const std::string &device_id)
         {
-            // Device PSK = HMAC-SHA256(master_secret, "DEVICE_PSK" || device_id)
-            std::vector<uint8_t> data;
-            std::string prefix = "DEVICE_PSK";
-            data.insert(data.end(), prefix.begin(), prefix.end());
-            data.insert(data.end(), device_id.begin(), device_id.end());
-            
-            unsigned int hmac_len;
-            std::vector<uint8_t> device_psk(EVP_MAX_MD_SIZE);
-            
-            unsigned char *result = HMAC(EVP_sha256(),
-                                        master_secret.data(), master_secret.size(),
-                                        data.data(), data.size(),
-                                        device_psk.data(), &hmac_len);
-            
-            if (!result)
+            std::vector<uint8_t> device_psk(HMAC_SIZE);
+            if (!mita::crypto::deriveDevicePSK(
+                    master_secret.data(), master_secret.size(),
+                    (const uint8_t*)device_id.c_str(), device_id.length(),
+                    device_psk.data()))
             {
                 throw std::runtime_error("Failed to derive device PSK");
             }
             
-            device_psk.resize(32);  // Return full 32-byte key for stronger security
             return device_psk;
         }
 
@@ -817,34 +641,23 @@ namespace mita
         std::vector<uint8_t> HandshakeManager::generate_nonce()
         {
             std::vector<uint8_t> nonce(NONCE_SIZE);
-            RAND_bytes(nonce.data(), NONCE_SIZE);
+            mita::crypto::generateNonce(nonce.data());
             return nonce;
         }
 
         std::vector<uint8_t> HandshakeManager::derive_session_key(const std::vector<uint8_t> &nonce1,
                                                                   const std::vector<uint8_t> &nonce2)
         {
-            // NOTE: This function is called AFTER authentication, so we should use master secret
-            // The caller must ensure device-specific PSK is used when needed
-            // Key derivation using HMAC-SHA256 (matches Python implementation)
-            std::vector<uint8_t> key_data;
-            key_data.insert(key_data.end(), nonce1.begin(), nonce1.end());
-            key_data.insert(key_data.end(), nonce2.begin(), nonce2.end());
-
-            unsigned int hmac_len;
-            std::vector<uint8_t> derived_key(EVP_MAX_MD_SIZE);
-
-            unsigned char *result = HMAC(EVP_sha256(), shared_secret_.data(), shared_secret_.size(),
-                                         key_data.data(), key_data.size(), derived_key.data(), &hmac_len);
-
-            if (!result)
+            std::vector<uint8_t> session_key(SESSION_KEY_SIZE);
+            if (!mita::crypto::deriveSessionKey(
+                    shared_secret_.data(), shared_secret_.size(),
+                    nonce1.data(), nonce2.data(),
+                    session_key.data()))
             {
                 throw std::runtime_error("Failed to derive session key");
             }
 
-            // Return first 16 bytes for AES-128
-            derived_key.resize(SESSION_KEY_SIZE);
-            return derived_key;
+            return session_key;
         }
         
         // Helper to derive session key using device-specific PSK
@@ -856,25 +669,16 @@ namespace mita
             // Derive device-specific PSK first
             std::vector<uint8_t> device_psk = derive_device_psk(shared_secret_, device_id);
             
-            // Then derive session key using device PSK
-            std::vector<uint8_t> key_data;
-            key_data.insert(key_data.end(), nonce1.begin(), nonce1.end());
-            key_data.insert(key_data.end(), nonce2.begin(), nonce2.end());
-
-            unsigned int hmac_len;
-            std::vector<uint8_t> derived_key(EVP_MAX_MD_SIZE);
-
-            unsigned char *result = HMAC(EVP_sha256(), device_psk.data(), device_psk.size(),
-                                         key_data.data(), key_data.size(), derived_key.data(), &hmac_len);
-
-            if (!result)
+            std::vector<uint8_t> session_key(SESSION_KEY_SIZE);
+            if (!mita::crypto::deriveSessionKey(
+                    device_psk.data(), device_psk.size(),
+                    nonce1.data(), nonce2.data(),
+                    session_key.data()))
             {
                 throw std::runtime_error("Failed to derive session key with device PSK");
             }
 
-            // Return first 16 bytes for AES-128
-            derived_key.resize(SESSION_KEY_SIZE);
-            return derived_key;
+            return session_key;
         }
 
         bool HandshakeManager::process_hello_packet(const ProtocolPacket &packet, std::string &device_id, std::vector<uint8_t> &nonce1)

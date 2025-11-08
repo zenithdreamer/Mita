@@ -1,12 +1,18 @@
+# Gather all source files automatically
+file(GLOB_RECURSE MAIN_SOURCES 
+    "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/*.c"
+)
+
+file(GLOB_RECURSE SHARED_SOURCES 
+    "${CMAKE_CURRENT_SOURCE_DIR}/../shared/**/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../shared/**/*.c"
+)
+
 idf_component_register(
     SRCS 
-        "main.cpp"
-        "core/mita_client.cpp"
-        "transport/ble_transport.cpp"
-        "transport/wifi_transport.cpp"
-        "transport/protocol_selector.cpp"
-        "messaging/message_handler.cpp"
-        "crypto/crypto_service.cpp"
+        ${MAIN_SOURCES}
+        ${SHARED_SOURCES}
     INCLUDE_DIRS 
         "."
         "../include"

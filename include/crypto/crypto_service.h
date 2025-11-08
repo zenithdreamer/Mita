@@ -4,50 +4,40 @@
 #include <cstring>
 #include <cstdint>
 #include <string>
-#include <mbedtls/md.h>
-#include <mbedtls/aes.h>
-#include <mbedtls/gcm.h>
 #include <esp_random.h>
 #include "../../shared/protocol/protocol_types.h"
+#include "../../shared/crypto/crypto_utils.h"
+#include "../../shared/crypto/gcm_crypto.h"
 
 class CryptoService
 {
 private:
     uint8_t session_key[SESSION_KEY_SIZE];
+    uint8_t encryption_key[SESSION_KEY_SIZE];
     bool session_key_valid;
     
-    // Counter-based IV to prevent IV reuse
     uint64_t iv_counter;
-    uint32_t session_salt;  // Random salt generated once per session
-
-    // Helper for key derivation
-    bool deriveSubkey(const uint8_t *key, size_t key_len, const char *info, uint8_t *output);
+    uint32_t session_salt;
 
 public:
     CryptoService();
     ~CryptoService() = default;
 
-    // Nonce generation
     void generateNonce(uint8_t *nonce_out);
 
-    // HMAC operations
     bool computeHMAC(const uint8_t *key, size_t key_len,
                      const uint8_t *data, size_t data_len,
                      uint8_t *hmac);
 
-    // Per-device PSK derivation (matches router implementation)
-    // Derives: Device_PSK = HMAC-SHA256(master_secret, "DEVICE_PSK" || device_id)
     static bool deriveDevicePSK(const std::string &master_secret, const std::string &device_id, 
                                uint8_t *device_psk_out);
 
-    // Session key management
     bool deriveSessionKey(const std::string &shared_secret, const uint8_t *nonce1, const uint8_t *nonce2);
-    bool rekeySession(const uint8_t *nonce3, const uint8_t *nonce4);  // Rekey from old session key
+    bool rekeySession(const uint8_t *nonce3, const uint8_t *nonce4);
     bool hasValidSessionKey() const;
     void clearSessionKey();
-    void getSessionKey(uint8_t *key_out) const;  // Get copy of session key for logging
+    void getSessionKey(uint8_t *key_out) const;
 
-    // AES-GCM Authenticated Encryption (recommended)
     bool encryptGCM(const uint8_t *plaintext, size_t plaintext_len,
                     const uint8_t *aad, size_t aad_len,
                     uint8_t *output, size_t &output_len);

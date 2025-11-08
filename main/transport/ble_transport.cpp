@@ -16,7 +16,6 @@
 #include "services/gatt/ble_svc_gatt.h"
 
 static const char *TAG = "BLE_TRANSPORT";
-static const char *TARGET_NAME = "MITA-ROUTER";
 
 // Static instance pointer for callbacks
 BLETransport* BLETransport::instance = nullptr;
@@ -111,7 +110,7 @@ bool BLETransport::connect()
 bool BLETransport::scanForRouter()
 {
     ESP_LOGI(TAG, "======================================");
-    ESP_LOGI(TAG, "Scanning for router '%s'...", TARGET_NAME);
+    ESP_LOGI(TAG, "Scanning for router '%s'...", router_id.c_str());
     ESP_LOGI(TAG, "======================================");
     
     router_found = false;
@@ -489,32 +488,32 @@ void BLETransport::onDeviceFound(const struct ble_gap_disc_desc *disc)
         memcpy(name, name_data, len);
         
         ESP_LOGI(TAG, "  Device name: '%s' (len=%d, complete=%d, looking for '%s')", 
-                 name, name_len, is_complete, TARGET_NAME);
+                 name, name_len, is_complete, instance->router_id.c_str());
         
         // Match complete name OR shortened name prefix
-        if (strcmp(name, TARGET_NAME) == 0) {
+        if (strcmp(name, instance->router_id.c_str()) == 0) {
             ESP_LOGI(TAG, "*** FOUND TARGET ROUTER (exact match): %s ***", name);
-            memcpy(&router_addr, &disc->addr, sizeof(router_addr));
-            router_found = true;
+            memcpy(&instance->router_addr, &disc->addr, sizeof(instance->router_addr));
+            instance->router_found = true;
             
             // Stop scanning and connect
             ble_gap_disc_cancel();
-            scanning = false;
+            instance->scanning = false;
             
-            connectToRouter();
+            instance->connectToRouter();
         }
         // Also check if this is a shortened version of our target name
-        else if (!is_complete && strncmp(name, TARGET_NAME, name_len) == 0 && 
-                 strlen(TARGET_NAME) > name_len) {
+        else if (!is_complete && strncmp(name, instance->router_id.c_str(), name_len) == 0 && 
+                 instance->router_id.length() > name_len) {
             ESP_LOGI(TAG, "*** FOUND TARGET ROUTER (shortened match): %s... ***", name);
-            memcpy(&router_addr, &disc->addr, sizeof(router_addr));
-            router_found = true;
+            memcpy(&instance->router_addr, &disc->addr, sizeof(instance->router_addr));
+            instance->router_found = true;
             
             // Stop scanning and connect
             ble_gap_disc_cancel();
-            scanning = false;
+            instance->scanning = false;
             
-            connectToRouter();
+            instance->connectToRouter();
         }
     } else {
         ESP_LOGD(TAG, "  No device name in this packet");

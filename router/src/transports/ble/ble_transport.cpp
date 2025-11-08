@@ -669,7 +669,7 @@ namespace mita
                 run_cmd("sudo btmgmt -i 0 io-cap 3", logger_); // NoInputNoOutput
 
                 // Name before power on
-                run_cmd("sudo btmgmt -i 0 name 'MITA-ROUTER'", logger_);
+                run_cmd("sudo btmgmt -i 0 name '" + config_.ble.device_name + "'", logger_);
 
                 // Power on
                 if (!run_cmd("sudo btmgmt -i 0 power on", logger_))
@@ -746,7 +746,7 @@ namespace mita
                 run_cmd("sudo btmgmt -i 0 advertising on", logger_, INT_MIN);
 
                 // Re-add adv if needed; ignore non-zero (already exists)
-                run_cmd("sudo btmgmt -i 0 add-adv -d -p 200 flags 0x06 name 'MITA-ROUTER'", logger_, INT_MIN);
+                run_cmd("sudo btmgmt -i 0 add-adv -d -p 200 flags 0x06 name '" + config_.ble.device_name + "'", logger_, INT_MIN);
             }
 
             void BLETransport::advertising_watchdog_loop()

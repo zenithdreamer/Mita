@@ -238,6 +238,9 @@ namespace mita
                                 return;
                             }
                             
+                            // Set transport fingerprint before authentication (BLE MAC address)
+                            device_management_.set_transport_fingerprint(device_id_, device_address_);
+                            
                             // Authenticate device with session crypto
                             device_management_.authenticate_device(device_id_, session_crypto_);
 
@@ -250,10 +253,11 @@ namespace mita
                                 // Remove handshake state as it's no longer needed
                                 handshake_manager_->remove_handshake(device_id_);
                                 
-                                logger_->info("AUTH_ACK sent successfully",
+                                logger_->info("Device authenticated and AUTH_ACK sent",
                                               core::LogContext()
                                                   .add("device_id", device_id_)
-                                                  .add("assigned_address", assigned_address));
+                                                  .add("assigned_address", assigned_address)
+                                                  .add("fingerprint", device_address_));
                             }
                             else
                             {

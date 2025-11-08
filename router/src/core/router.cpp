@@ -420,6 +420,22 @@ namespace mita
 
             logger_->info("Starting WiFi transport dynamically...");
 
+            // Enable WiFi interface first
+            logger_->info("Enabling WiFi interface...");
+
+            // Unblock WiFi via rfkill
+            system("rfkill unblock wifi 2>/dev/null");
+
+            // Enable WiFi radio using nmcli
+            system("nmcli radio wifi on 2>/dev/null");
+
+            // Bring up WiFi interface
+            system("ip link set wlan0 up 2>/dev/null");
+            system("ip link set wlp0s20f3 up 2>/dev/null");
+
+            // Small delay to let interface come up
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
             // Temporarily enable WiFi in config
             config_->wifi.enabled = true;
 
@@ -469,10 +485,23 @@ namespace mita
                     wifi_ap_manager_.reset();
                 }
 
+                // Disable WiFi interface completely
+                logger_->info("Disabling WiFi interface...");
+
+                // Bring down WiFi interface using nmcli
+                system("nmcli radio wifi off 2>/dev/null");
+
+                // Alternative: bring down specific WiFi interfaces
+                system("ip link set wlan0 down 2>/dev/null");
+                system("ip link set wlp0s20f3 down 2>/dev/null");
+
+                // Use rfkill to block WiFi
+                system("rfkill block wifi 2>/dev/null");
+
                 // Update config
                 config_->wifi.enabled = false;
 
-                logger_->info("WiFi transport stopped successfully");
+                logger_->info("WiFi transport and interface disabled successfully");
                 return true;
             }
             catch (const std::exception &e)

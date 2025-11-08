@@ -1,7 +1,8 @@
 #ifndef TRANSPORT_INTERFACE_H
 #define TRANSPORT_INTERFACE_H
 
-#include <Arduino.h>
+#include <string>
+#include <cstdint>
 #include "protocol_types.h"
 
 class ITransport {
@@ -16,7 +17,7 @@ public:
     virtual bool receivePacket(BasicProtocolPacket& packet, unsigned long timeout_ms = 1000) = 0;
 
     virtual TransportType getType() const = 0;
-    virtual String getConnectionInfo() const = 0;
+    virtual std::string getConnectionInfo() const = 0;
 };
 
 #endif // TRANSPORT_INTERFACE_H

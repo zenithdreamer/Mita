@@ -35,8 +35,13 @@ namespace mita
               logger_(core::get_logger("WiFiTransport")),
               packet_monitor_(packet_monitor)
         {
+            // Get WiFi AP IP from config
+            wifi_ap_ip_ = config_.wifi.server_host;
+            
             logger_->info("WiFi transport initialized",
-                          core::LogContext().add("protocol", MITA_IP_PROTOCOL));
+                          core::LogContext()
+                              .add("protocol", MITA_IP_PROTOCOL)
+                              .add("ap_ip", wifi_ap_ip_));
         }
 
         WiFiTransport::~WiFiTransport()
@@ -426,9 +431,21 @@ namespace mita
             packet[10] = 0;
             packet[11] = 0;
 
-            // Source IP (router's local IP)
+            // Determine source IP based on destination subnet
+            // If destination is on WiFi AP subnet (192.168.50.x), use WiFi AP IP as source
+            std::string src_ip;
+            if (dest_ip.substr(0, 11) == "192.168.50.")
+            {
+                src_ip = wifi_ap_ip_;  // Use WiFi AP interface IP
+            }
+            else
+            {
+                src_ip = local_ip_;  // Use main network interface IP
+            }
+
+            // Source IP
             struct in_addr src_addr;
-            inet_pton(AF_INET, local_ip_.c_str(), &src_addr);
+            inet_pton(AF_INET, src_ip.c_str(), &src_addr);
             memcpy(packet + 12, &src_addr, 4);
 
             // Destination IP
@@ -475,7 +492,7 @@ namespace mita
             logger_->debug("Raw packet sent successfully",
                            core::LogContext()
                                .add("dest_ip", dest_ip)
-                               .add("src_ip", local_ip_)
+                               .add("src_ip", src_ip)
                                .add("payload_size", length)
                                .add("total_size", total_len)
                                .add("sent_bytes", sent));

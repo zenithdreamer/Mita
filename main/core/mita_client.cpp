@@ -2,18 +2,23 @@
 #include "../include/transport/wifi_transport.h"
 #include "../include/transport/ble_transport.h"
 #include "../include/transport/protocol_selector.h"
+#include <driver/gpio.h>
+#include <esp_random.h>
+#include <esp_system.h>
+
+static const char *TAG = "MITA_CLIENT";
 
 #ifndef LED_BUILTIN
-#define LED_BUILTIN 2
+#define LED_BUILTIN GPIO_NUM_2
 #endif
 
 MitaClient::MitaClient(const NetworkConfig &config)
     : transport(nullptr), network_config(config),
       assigned_address(UNASSIGNED_ADDRESS), handshake_completed(false),
-      challenge_baseline_timestamp(0), challenge_baseline_millis(0),
+      packets_sent(0),  // Initialize packet counter for session rekey
       last_heartbeat(0), last_sensor_reading(0), last_ping_sent(0),
-      qos_level(QoSLevel::WITH_ACK),  // Default to QoS with ACK
-      packets_sent(0)  // Initialize packet counter for session rekey
+      challenge_baseline_timestamp(0), challenge_baseline_millis(0),
+      qos_level(QoSLevel::WITH_ACK)  // Default to QoS with ACK
 {
     // Initialize nonce arrays to zero
     memset(nonce1, 0, NONCE_SIZE);
@@ -21,17 +26,17 @@ MitaClient::MitaClient(const NetworkConfig &config)
 }
 
 // Get timestamp adjusted to router's time base
-// Returns local millis() if no baseline established (pre-handshake)
+// Returns local ((unsigned long)(esp_timer_get_time() / 1000ULL)) if no baseline established (pre-handshake)
 uint32_t MitaClient::getAdjustedTimestamp() const
 {
     if (challenge_baseline_timestamp == 0)
     {
         // No baseline yet, use local time
-        return (uint32_t)millis();
+        return (uint32_t)((unsigned long)(esp_timer_get_time() / 1000ULL));
     }
 
     // Calculate elapsed time since baseline was established
-    unsigned long elapsed = millis() - challenge_baseline_millis;
+    unsigned long elapsed = ((unsigned long)(esp_timer_get_time() / 1000ULL)) - challenge_baseline_millis;
 
     // Add elapsed time to router's baseline to get synchronized timestamp
     // Note: This truncates to 32-bit, which is fine for the protocol
@@ -46,43 +51,43 @@ MitaClient::~MitaClient()
 
 bool MitaClient::initialize()
 {
-    Serial.println("MitaClient: Initializing...");
+    ESP_LOGI(TAG, "MitaClient: Initializing...");
 
     // Initialize LED pin
-    pinMode(LED_BUILTIN, OUTPUT);
-    digitalWrite(LED_BUILTIN, LOW);
+    gpio_set_direction(LED_BUILTIN, GPIO_MODE_OUTPUT);
+    gpio_set_level(LED_BUILTIN, 0);
 
-    Serial.printf("MitaClient: Device ID: %s\n", network_config.device_id.c_str());
-    Serial.printf("MitaClient: Router ID: %s\n", network_config.router_id.c_str());
+    ESP_LOGI(TAG, "MitaClient: Device ID: %s", network_config.device_id.c_str());
+    ESP_LOGI(TAG, "MitaClient: Router ID: %s", network_config.router_id.c_str());
 
     // Always derive device-specific PSK from master secret (forced for security)
-    Serial.println("MitaClient: Deriving device-specific PSK from master secret...");
+    ESP_LOGI(TAG, "MitaClient: Deriving device-specific PSK from master secret...");
     uint8_t device_psk[HMAC_SIZE];
     
     if (!CryptoService::deriveDevicePSK(network_config.shared_secret, 
                                        network_config.device_id, 
                                        device_psk))
     {
-        Serial.println("MitaClient: ERROR - Failed to derive device PSK!");
+        ESP_LOGI(TAG, "%s", "MitaClient: ERROR - Failed to derive device PSK!");
         return false;
     }
     
     // Replace shared_secret with derived device PSK (as binary string)
-    network_config.shared_secret = String((char*)device_psk, HMAC_SIZE);
+    network_config.shared_secret = std::string((char*)device_psk, HMAC_SIZE);
     
 #ifdef DEBUG_CRYPTO
-    Serial.println("MitaClient: Device PSK derived and configured");
-    Serial.println("MitaClient: ========================================");
-    Serial.print("MitaClient: Device PSK (hex): ");
+    ESP_LOGI(TAG, "%s", "MitaClient: Device PSK derived and configured");
+    ESP_LOGI(TAG, "%s", "MitaClient: ========================================");
+    ESP_LOGI(TAG, "%s", "MitaClient: Device PSK (hex): ");
     for (int i = 0; i < 16; i++)  // Show first 16 bytes
     {
-        if (device_psk[i] < 0x10) Serial.print("0");
-        Serial.print(device_psk[i], HEX);
+        if (device_psk[i] < 0x10) ESP_LOGI(TAG, "%s", "0");
+        ESP_LOGI(TAG, "%s", device_psk[i], HEX);
     }
-    Serial.println("...");
-    Serial.println("MitaClient: ========================================");
+    ESP_LOGI(TAG, "%s", "...");
+    ESP_LOGI(TAG, "%s", "MitaClient: ========================================");
 #else
-    Serial.println("MitaClient: Device PSK derived and configured");
+    ESP_LOGI(TAG, "%s", "MitaClient: Device PSK derived and configured");
 #endif
 
     return true;
@@ -92,43 +97,43 @@ bool MitaClient::connectToNetwork(ITransport *transport_impl)
 {
     if (!transport_impl)
     {
-        Serial.println("MitaClient: No transport provided");
+        ESP_LOGI(TAG, "%s", "MitaClient: No transport provided");
         return false;
     }
 
     transport = transport_impl;
-    Serial.printf("MitaClient: Attempting to connect via %s\n",
+    ESP_LOGI(TAG, "MitaClient: Attempting to connect via %s\n",
                   transport->getType() == TRANSPORT_WIFI ? "WiFi" : "BLE");
 
     if (!transport->connect())
     {
-        Serial.println("MitaClient: Transport connection failed");
+        ESP_LOGI(TAG, "%s", "MitaClient: Transport connection failed");
         return false;
     }
 
     if (!performHandshake())
     {
-        Serial.println("MitaClient: Handshake failed");
+        ESP_LOGI(TAG, "%s", "MitaClient: Handshake failed");
         transport->disconnect();
         return false;
     }
 
-    Serial.println("MitaClient: Successfully connected to network");
-    Serial.printf("MitaClient: Assigned address: 0x%04X\n", assigned_address);
-    Serial.printf("MitaClient: Transport: %s\n", transport->getConnectionInfo().c_str());
+    ESP_LOGI(TAG, "%s", "MitaClient: Successfully connected to network");
+    ESP_LOGI(TAG, "MitaClient: Assigned address: 0x%04X\n", assigned_address);
+    ESP_LOGI(TAG, "MitaClient: Transport: %s\n", transport->getConnectionInfo().c_str());
 
     return true;
 }
 
-bool MitaClient::connectToNetworkSmart(ProtocolSelector* selector, const String& shared_secret)
+bool MitaClient::connectToNetworkSmart(ProtocolSelector* selector, const std::string& shared_secret)
 {
     if (!selector)
     {
-        Serial.println("MitaClient: No protocol selector provided");
+        ESP_LOGI(TAG, "%s", "MitaClient: No protocol selector provided");
         return false;
     }
 
-    Serial.println("MitaClient: Starting smart protocol selection...");
+    ESP_LOGI(TAG, "%s", "MitaClient: Starting smart protocol selection...");
 
     // Get priority list of protocols to try
     TransportType priority_list[2];
@@ -141,32 +146,33 @@ bool MitaClient::connectToNetworkSmart(ProtocolSelector* selector, const String&
         TransportType protocol = priority_list[i];
         const char* protocol_name = (protocol == TRANSPORT_WIFI) ? "WiFi" : "BLE";
 
-        Serial.printf("\nMitaClient: Attempting connection via %s (priority %d/%d)\n",
+        ESP_LOGI(TAG, "\nMitaClient: Attempting connection via %s (priority %d/%d)\n",
                      protocol_name, i + 1, protocol_count);
 
         // Create appropriate transport
         ITransport* transport_impl = nullptr;
-        unsigned long connect_start = millis();
+        unsigned long connect_start = ((unsigned long)(esp_timer_get_time() / 1000ULL));
 
         if (protocol == TRANSPORT_WIFI)
         {
             transport_impl = new WiFiTransport(shared_secret);
         }
-        else
+        else if (protocol == TRANSPORT_BLE)
         {
+            // BLE L2CAP CoC transport enabled
             transport_impl = new BLETransport(network_config.device_id, network_config.router_id);
         }
 
         if (!transport_impl)
         {
-            Serial.printf("MitaClient: Failed to create %s transport\n", protocol_name);
-            selector->reportConnectionAttempt(protocol, false, 0, -100);
+            ESP_LOGI(TAG, "MitaClient: Failed to create %s transport\n", protocol_name);
+            selector->updateStats(protocol, false, 0, -100);
             continue;
         }
 
         // Attempt connection
         bool connect_success = connectToNetwork(transport_impl);
-        int connect_time_ms = millis() - connect_start;
+        int connect_time_ms = ((unsigned long)(esp_timer_get_time() / 1000ULL)) - connect_start;
 
         if (connect_success)
         {
@@ -179,21 +185,21 @@ bool MitaClient::connectToNetworkSmart(ProtocolSelector* selector, const String&
             }
             // BLE signal strength would need to be added to BLETransport
 
-            Serial.printf("MitaClient: Successfully connected via %s in %d ms\n",
+            ESP_LOGI(TAG, "MitaClient: Successfully connected via %s in %d ms\n",
                           protocol_name, connect_time_ms);
 
             // Report success to selector for learning
-            selector->reportConnectionAttempt(protocol, true, connect_time_ms, signal_strength);
+            selector->updateStats(protocol, true, connect_time_ms, signal_strength);
 
             return true;
         }
         else
         {
-            Serial.printf("MitaClient: Failed to connect via %s (took %d ms)\n",
+            ESP_LOGI(TAG, "MitaClient: Failed to connect via %s (took %d ms)\n",
                           protocol_name, connect_time_ms);
 
             // Report failure to selector for learning
-            selector->reportConnectionAttempt(protocol, false, connect_time_ms, -100);
+            selector->updateStats(protocol, false, connect_time_ms, -100);
 
             // Clean up failed transport
             delete transport_impl;
@@ -201,7 +207,7 @@ bool MitaClient::connectToNetworkSmart(ProtocolSelector* selector, const String&
         }
     }
 
-    Serial.println("\nMitaClient: All connection methods failed");
+    ESP_LOGI(TAG, "%s", "\nMitaClient: All connection methods failed");
     return false;
 }
 
@@ -221,7 +227,7 @@ void MitaClient::disconnect(DisconnectReason reason)
     // If we have an active session, send graceful disconnect
     if (handshake_completed && assigned_address != UNASSIGNED_ADDRESS)
     {
-        Serial.printf("MitaClient: Sending graceful disconnect (reason: 0x%02X)\n",
+        ESP_LOGI(TAG, "MitaClient: Sending graceful disconnect (reason: 0x%02X)\n",
                       static_cast<uint8_t>(reason));
 
         if (sendDisconnect(reason))
@@ -242,7 +248,7 @@ void MitaClient::disconnect(DisconnectReason reason)
     assigned_address = UNASSIGNED_ADDRESS;
     crypto_service.clearSessionKey();
 
-    Serial.println("MitaClient: Disconnected");
+    ESP_LOGI(TAG, "%s", "MitaClient: Disconnected");
 }
 
 void MitaClient::update()
@@ -252,7 +258,7 @@ void MitaClient::update()
         return;
     }
 
-    unsigned long current_time = millis();
+    unsigned long current_time = ((unsigned long)(esp_timer_get_time() / 1000ULL));
 
     // Handle incoming messages
     handleIncomingMessages();
@@ -287,7 +293,7 @@ uint16_t MitaClient::getAssignedAddress() const
     return assigned_address;
 }
 
-String MitaClient::getDeviceId() const
+std::string MitaClient::getDeviceId() const
 {
     return network_config.device_id;
 }
@@ -308,16 +314,16 @@ bool MitaClient::sendHeartbeat()
     packet.timestamp = getAdjustedTimestamp();
     packet.payload_length = 0;
 
-    Serial.println("MitaClient: Sending heartbeat");
+    ESP_LOGI(TAG, "%s", "MitaClient: Sending heartbeat");
     return transport->sendPacket(packet);
 }
 
 // send data to router
 bool MitaClient::sendSensorData()
 {
-    String sensor_data = generateSensorData();
+    std::string sensor_data = generateSensorData();
 
-    Serial.printf("MitaClient: Sending sensor data (%d bytes)\n", sensor_data.length());
+    ESP_LOGI(TAG, "MitaClient: Sending sensor data (%d bytes)\n", sensor_data.length());
     return sendEncryptedMessage(ROUTER_ADDRESS, sensor_data);
 }
 
@@ -337,7 +343,7 @@ bool MitaClient::sendPing()
 
     // Payload: PING control type (0x00) + timestamp for RTT calculation
     packet.payload[0] = 0x00; // ControlType::PING
-    uint32_t ping_time = millis();
+    uint32_t ping_time = ((unsigned long)(esp_timer_get_time() / 1000ULL));
     packet.payload[1] = (ping_time >> 24) & 0xFF;
     packet.payload[2] = (ping_time >> 16) & 0xFF;
     packet.payload[3] = (ping_time >> 8) & 0xFF;
@@ -346,7 +352,7 @@ bool MitaClient::sendPing()
 
     last_ping_sent = ping_time;
 
-    Serial.printf("MitaClient: Sending PING (time=%lu)\n", ping_time);
+    ESP_LOGI(TAG, "MitaClient: Sending PING (time=%lu)\n", ping_time);
     return transport->sendPacket(packet);
 }
 
@@ -355,15 +361,15 @@ bool MitaClient::sendPing()
 //  {
 //      if (network_config.device_id != "ESP32_Sensor_001")
 //      {
-//          Serial.println("MitaClient: This device doesn't send sensor data");
+//          ESP_LOGI(TAG, "%s", "MitaClient: This device doesn't send sensor data");
 //          return true;
 //      }
 
-//     String sensor_data = generateSensorData();
+//     std::string sensor_data = generateSensorData();
 
 //     uint16_t target_address = 2;
 
-//     Serial.printf("MitaClient: Sending sensor data to ESP32_Sensor_002 (address 0x%04X) (%d bytes)\n", target_address, sensor_data.length());
+//     ESP_LOGI(TAG, "MitaClient: Sending sensor data to ESP32_Sensor_002 (address 0x%04X) (%d bytes)\n", target_address, sensor_data.length());
 //     return sendEncryptedMessage(target_address, sensor_data);
 // }
 
@@ -379,7 +385,7 @@ bool MitaClient::addMessageHandler(IMessageHandler *handler)
 
 bool MitaClient::performHandshake()
 {
-    Serial.println("MitaClient: Starting handshake...");
+    ESP_LOGI(TAG, "%s", "MitaClient: Starting handshake...");
 
     // Reset timestamp validation baseline for each new handshake
     challenge_baseline_timestamp = 0;
@@ -387,30 +393,32 @@ bool MitaClient::performHandshake()
 
     if (!sendHello())
     {
-        Serial.println("MitaClient: Failed to send HELLO");
+        ESP_LOGI(TAG, "%s", "MitaClient: Failed to send HELLO");
         return false;
     }
 
     if (!receiveChallenge())
     {
-        Serial.println("MitaClient: Failed to receive CHALLENGE");
+        ESP_LOGI(TAG, "%s", "MitaClient: Failed to receive CHALLENGE");
         return false;
     }
 
     if (!sendAuth())
     {
-        Serial.println("MitaClient: Failed to send AUTH");
+        ESP_LOGI(TAG, "%s", "MitaClient: Failed to send AUTH");
         return false;
     }
 
+    ESP_LOGI(TAG, "%s", "MitaClient: sendAuth() returned successfully, calling receiveAuthAck()...");
+
     if (!receiveAuthAck())
     {
-        Serial.println("MitaClient: Failed to receive AUTH_ACK");
+        ESP_LOGI(TAG, "%s", "MitaClient: Failed to receive AUTH_ACK");
         return false;
     }
 
     handshake_completed = true;
-    Serial.println("MitaClient: Handshake completed successfully");
+    ESP_LOGI(TAG, "%s", "MitaClient: Handshake completed successfully");
     return true;
 }
 
@@ -426,7 +434,7 @@ bool MitaClient::sendHello()
     packet.ttl = DEFAULT_TTL;
     packet.priority_flags = PRIORITY_HIGH; // Handshake is high priority
     packet.fragment_id = 0;
-    packet.timestamp = (uint32_t)millis();
+    packet.timestamp = (uint32_t)((unsigned long)(esp_timer_get_time() / 1000ULL));
 
     crypto_service.generateNonce(nonce1);
 
@@ -450,20 +458,20 @@ bool MitaClient::sendHello()
     packet.payload_length = offset;
 
 #ifdef DEBUG_CRYPTO
-    Serial.print("MitaClient: Sending HELLO (nonce1: ");
+    ESP_LOGI(TAG, "%s", "MitaClient: Sending HELLO (nonce1: ");
     for (int i = 0; i < NONCE_SIZE; i++)
     {
         if (nonce1[i] < 0x10)
-            Serial.print("0");
-        Serial.print(nonce1[i], HEX);
+            ESP_LOGI(TAG, "%s", "0");
+        ESP_LOGI(TAG, "%s", nonce1[i], HEX);
     }
-    Serial.println(")");
+    ESP_LOGI(TAG, "%s", ")");
 #else
-    Serial.println("MitaClient: Sending HELLO");
+    ESP_LOGI(TAG, "%s", "MitaClient: Sending HELLO");
 #endif
 
     // Debug: Print packet header for checksum debugging
-    Serial.printf("MitaClient: HELLO packet header: ver_flags=0x%02X type=0x%02X src=0x%04X dst=0x%04X len=%d chk=0x%02X seq=%d\n",
+    ESP_LOGI(TAG, "MitaClient: HELLO packet header: ver_flags=0x%02X type=0x%02X src=0x%04X dst=0x%04X len=%d chk=0x%02X seq=%d\n",
                   packet.version_flags, packet.msg_type, packet.source_addr, packet.dest_addr,
                   packet.payload_length, packet.checksum, packet.sequence_number);
 
@@ -481,7 +489,7 @@ bool MitaClient::receiveChallenge()
     // Expect 24 bytes: 16-byte nonce2 + 8-byte timestamp
     if (packet.payload_length < 24)
     {
-        Serial.printf("MitaClient: CHALLENGE payload too small: %d bytes (expected 24)\n", packet.payload_length);
+        ESP_LOGI(TAG, "MitaClient: CHALLENGE payload too small: %d bytes (expected 24)\n", packet.payload_length);
         return false;
     }
 
@@ -503,13 +511,13 @@ bool MitaClient::receiveChallenge()
     if (challenge_baseline_timestamp == 0)
     {
         challenge_baseline_timestamp = timestamp_ms;
-        challenge_baseline_millis = millis();
-        Serial.printf("MitaClient: Established timestamp baseline: %llu ms\n", timestamp_ms);
+        challenge_baseline_millis = ((unsigned long)(esp_timer_get_time() / 1000ULL));
+        ESP_LOGI(TAG, "MitaClient: Established timestamp baseline: %llu ms\n", timestamp_ms);
     }
     else
     {
         // Calculate expected timestamp based on elapsed time since first challenge
-        unsigned long elapsed_millis = millis() - challenge_baseline_millis;
+        unsigned long elapsed_millis = ((unsigned long)(esp_timer_get_time() / 1000ULL)) - challenge_baseline_millis;
         uint64_t expected_timestamp = challenge_baseline_timestamp + elapsed_millis;
 
         // Strict 2-second window for clock drift and network delays
@@ -527,26 +535,26 @@ bool MitaClient::receiveChallenge()
 
         if (timestamp_diff > MAX_TIMESTAMP_DRIFT_MS)
         {
-            Serial.printf("MitaClient: CHALLENGE timestamp drift too large: %llu ms (expected ~%llu, got %llu)\n",
+            ESP_LOGI(TAG, "MitaClient: CHALLENGE timestamp drift too large: %llu ms (expected ~%llu, got %llu)\n",
                           timestamp_diff, expected_timestamp, timestamp_ms);
-            Serial.println("MitaClient: Possible replay attack detected");
+            ESP_LOGI(TAG, "%s", "MitaClient: Possible replay attack detected");
             return false;
         }
 
-        Serial.printf("MitaClient: Timestamp validation passed (drift: %llu ms)\n", timestamp_diff);
+        ESP_LOGI(TAG, "MitaClient: Timestamp validation passed (drift: %llu ms)\n", timestamp_diff);
     }
 
 #ifdef DEBUG_CRYPTO
-    Serial.print("MitaClient: Received CHALLENGE (nonce2: ");
+    ESP_LOGI(TAG, "%s", "MitaClient: Received CHALLENGE (nonce2: ");
     for (int i = 0; i < NONCE_SIZE; i++)
     {
         if (nonce2[i] < 0x10)
-            Serial.print("0");
-        Serial.print(nonce2[i], HEX);
+            ESP_LOGI(TAG, "%s", "0");
+        ESP_LOGI(TAG, "%s", nonce2[i], HEX);
     }
-    Serial.printf(", timestamp: %llu)\n", timestamp_ms);
+    ESP_LOGI(TAG, ", timestamp: %llu)\n", timestamp_ms);
 #else
-    Serial.printf("MitaClient: Received CHALLENGE (timestamp: %llu)\n", timestamp_ms);
+    ESP_LOGI(TAG, "MitaClient: Received CHALLENGE (timestamp: %llu)\n", timestamp_ms);
 #endif
 
     return true;
@@ -554,6 +562,8 @@ bool MitaClient::receiveChallenge()
 
 bool MitaClient::sendAuth()
 {
+    ESP_LOGI(TAG, "%s", "MitaClient: sendAuth() - Creating packet");
+    
     BasicProtocolPacket packet;
     packet.version_flags = (PROTOCOL_VERSION << 4);
     packet.msg_type = MSG_AUTH;
@@ -564,8 +574,11 @@ bool MitaClient::sendAuth()
     packet.ttl = DEFAULT_TTL;
     packet.priority_flags = PRIORITY_HIGH; // Handshake is high priority
     packet.fragment_id = 0;
-    packet.timestamp = (uint32_t)millis();
+    packet.timestamp = (uint32_t)((unsigned long)(esp_timer_get_time() / 1000ULL));
 
+    ESP_LOGI(TAG, "MitaClient: sendAuth() - Constructing HMAC data (device_id_len=%d, router_id_len=%d)\n",
+             network_config.device_id.length(), network_config.router_id.length());
+    
     // Construct HMAC data: nonce2 (16 bytes) || device_id || router_id
     size_t data_len = NONCE_SIZE + network_config.device_id.length() + network_config.router_id.length();
     uint8_t *auth_data = new uint8_t[data_len];
@@ -577,18 +590,23 @@ bool MitaClient::sendAuth()
     memcpy(auth_data + NONCE_SIZE + network_config.device_id.length(),
            network_config.router_id.c_str(), network_config.router_id.length());
 
+    ESP_LOGI(TAG, "MitaClient: sendAuth() - Computing HMAC (psk_len=%d, data_len=%d)\n",
+             network_config.shared_secret.length(), data_len);
+    
     uint8_t auth_hmac[HMAC_SIZE];
     bool hmac_result = crypto_service.computeHMAC(
-        (uint8_t *)network_config.shared_secret.c_str(), network_config.shared_secret.length(),
+        (uint8_t *)network_config.shared_secret.data(), network_config.shared_secret.length(),
         auth_data, data_len, auth_hmac);
 
     delete[] auth_data;
 
     if (!hmac_result)
     {
-        Serial.println("MitaClient: Failed to compute AUTH HMAC");
+        ESP_LOGI(TAG, "%s", "MitaClient: Failed to compute AUTH HMAC");
         return false;
     }
+
+    ESP_LOGI(TAG, "%s", "MitaClient: sendAuth() - HMAC computed successfully");
 
     // Payload: HMAC (16 bytes) || nonce1 (16 bytes) = 32 bytes total
     memcpy(packet.payload, auth_hmac, 16);
@@ -596,32 +614,39 @@ bool MitaClient::sendAuth()
 
     packet.payload_length = 32;
 
-    Serial.println("MitaClient: Sending AUTH (32 bytes)");
+    ESP_LOGI(TAG, "MitaClient: Sending AUTH (32 bytes), packet addr=%p, payload_len=%d\n", 
+             &packet, packet.payload_length);
+    
     return transport->sendPacket(packet);
 }
 
 bool MitaClient::receiveAuthAck()
 {
+    ESP_LOGI(TAG, "%s", "MitaClient: Waiting for AUTH_ACK...");
+    
     BasicProtocolPacket packet;
     if (!transport->receivePacket(packet, 5000) || packet.msg_type != MSG_AUTH_ACK)
     {
+        ESP_LOGI(TAG, "%s", "MitaClient: No AUTH_ACK received or wrong message type");
         return false;
     }
+
+    ESP_LOGI(TAG, "MitaClient: Received AUTH_ACK, payload_length=%d\n", packet.payload_length);
 
     // Expect 18 bytes: HMAC (16) + address (2)
     if (packet.payload_length < 18)
     {
-        Serial.printf("MitaClient: AUTH_ACK payload too small: %d bytes (expected 18)\n", packet.payload_length);
+        ESP_LOGI(TAG, "MitaClient: AUTH_ACK payload too small: %d bytes (expected 18)\n", packet.payload_length);
         return false;
     }
 
     // Verify HMAC computed over full 16-byte nonce1
     uint8_t expected_hmac[HMAC_SIZE];
     if (!crypto_service.computeHMAC(
-            (uint8_t *)network_config.shared_secret.c_str(), network_config.shared_secret.length(),
+            (uint8_t *)network_config.shared_secret.data(), network_config.shared_secret.length(),
             nonce1, NONCE_SIZE, expected_hmac))
     {
-        Serial.println("MitaClient: Failed to compute expected HMAC");
+        ESP_LOGI(TAG, "%s", "MitaClient: Failed to compute expected HMAC");
         return false;
     }
 
@@ -634,7 +659,7 @@ bool MitaClient::receiveAuthAck()
 
     if (diff != 0)
     {
-        Serial.println("MitaClient: Router authentication failed - HMAC mismatch");
+        ESP_LOGI(TAG, "%s", "MitaClient: Router authentication failed - HMAC mismatch");
         return false;
     }
 
@@ -643,7 +668,7 @@ bool MitaClient::receiveAuthAck()
     // Derive session key from both 16-byte nonces
     if (!crypto_service.deriveSessionKey(network_config.shared_secret, nonce1, nonce2))
     {
-        Serial.println("MitaClient: Failed to derive session key");
+        ESP_LOGI(TAG, "%s", "MitaClient: Failed to derive session key");
         return false;
     }
 
@@ -652,20 +677,20 @@ bool MitaClient::receiveAuthAck()
     uint8_t session_key_bytes[SESSION_KEY_SIZE];
     crypto_service.getSessionKey(session_key_bytes);
 
-    Serial.println("MitaClient: ========================================");
-    Serial.println("MitaClient: SESSION KEY");
-    Serial.print("MitaClient: ");
+    ESP_LOGI(TAG, "%s", "MitaClient: ========================================");
+    ESP_LOGI(TAG, "%s", "MitaClient: SESSION KEY");
+    ESP_LOGI(TAG, "%s", "MitaClient: ");
     for (int i = 0; i < SESSION_KEY_SIZE; i++)
     {
         if (session_key_bytes[i] < 0x10)
-            Serial.print("0");
-        Serial.print(session_key_bytes[i], HEX);
+            ESP_LOGI(TAG, "%s", "0");
+        ESP_LOGI(TAG, "%s", session_key_bytes[i], HEX);
     }
-    Serial.println();
-    Serial.println("MitaClient: ========================================");
+    ESP_LOGI(TAG, "%s", );
+    ESP_LOGI(TAG, "%s", "MitaClient: ========================================");
 #endif
 
-    Serial.printf("MitaClient: AUTH_ACK received, assigned address: 0x%04X\n", assigned_address);
+    ESP_LOGI(TAG, "MitaClient: AUTH_ACK received, assigned address: 0x%04X\n", assigned_address);
     return true;
 }
 
@@ -690,10 +715,10 @@ void MitaClient::handleIncomingMessages()
                                          ((uint32_t)packet.payload[3] << 8) |
                                          ((uint32_t)packet.payload[4]);
 
-                    uint32_t now = millis();
+                    uint32_t now = ((unsigned long)(esp_timer_get_time() / 1000ULL));
                     uint32_t rtt = now - sent_time;
 
-                    Serial.printf("MitaClient: PONG received! RTT = %lu ms\n", rtt);
+                    ESP_LOGI(TAG, "MitaClient: PONG received! RTT = %lu ms\n", rtt);
                 }
             }
             return;
@@ -740,12 +765,27 @@ void MitaClient::handleIncomingMessages()
                 case 0x0A:
                     error_str = "AUTHENTICATION_FAILED";
                     break;
+                case 0x0B:
+                    error_str = "NOT_AUTHENTICATED";
+                    break;
                 }
 
-                Serial.printf("MitaClient: ERROR from router: %s (code=0x%02X, seq=%d)\n",
+                ESP_LOGI(TAG, "MitaClient: ERROR from router: %s (code=0x%02X, seq=%d)\n",
                               error_str, error_code, failed_seq);
 
-                // TODO: React to specific errors
+                // React to specific errors
+                if (error_code == 0x0B) // NOT_AUTHENTICATED
+                {
+                    ESP_LOGI(TAG, "%s", "MitaClient: Router requires re-authentication - triggering reconnect");
+                    // Clear session state to force full handshake on next connection attempt
+                    crypto_service.clearSessionKey();
+                    handshake_completed = false;
+                    // Disconnect transport to trigger reconnection
+                    if (transport) {
+                        transport->disconnect();
+                    }
+                }
+                // TODO: React to other errors
                 // - INVALID_SEQUENCE: Reset sequence counter
                 // - SESSION_EXPIRED: Reconnect with full handshake
                 // - RATE_LIMIT_EXCEEDED: Slow down transmission
@@ -772,10 +812,10 @@ void MitaClient::handleIncomingMessages()
                                           aad, sizeof(aad),
                                           decrypted, decrypted_length))
             {
-                String message = String((char *)decrypted, decrypted_length);
-                Serial.printf("MitaClient: Received GCM authenticated message: %s\n", message.c_str());
+                std::string message = std::string((char *)decrypted, decrypted_length);
+                ESP_LOGI(TAG, "MitaClient: Received GCM authenticated message: %s\n", message.c_str());
 
-                String response;
+                std::string response;
                 if (message_dispatcher.processMessage(message, response))
                 {
                     // TODO: Test sending to non-existent device
@@ -787,39 +827,39 @@ void MitaClient::handleIncomingMessages()
                     {
                         if (doc["command"] == "restart" && doc["status"] == "restarting")
                         {
-                            delay(1000);
-                            ESP.restart();
+                            vTaskDelay(pdMS_TO_TICKS(1000));
+                            esp_restart();
                         }
                     }
                 }
             }
             else
             {
-                Serial.println("MitaClient: Failed to decrypt message - MAC verification may have failed");
+                ESP_LOGI(TAG, "%s", "MitaClient: Failed to decrypt message - MAC verification may have failed");
             }
         }
     }
 }
 
-bool MitaClient::sendEncryptedMessage(uint16_t dest_addr, const String &message)
+bool MitaClient::sendEncryptedMessage(uint16_t dest_addr, const std::string &message)
 {
     // Use the configured QoS level
     return sendEncryptedMessageWithQoS(dest_addr, message, qos_level);
 }
 
-String MitaClient::generateSensorData()
+std::string MitaClient::generateSensorData()
 {
     DynamicJsonDocument doc(256);
     doc["type"] = "sensor_data";
     doc["device_id"] = network_config.device_id;
-    doc["timestamp"] = millis();
+    doc["timestamp"] = ((unsigned long)(esp_timer_get_time() / 1000ULL));
 
-    doc["temperature"] = 20.0 + (random(0, 200) / 10.0);
-    doc["humidity"] = 40.0 + (random(0, 400) / 10.0);
-    doc["pressure"] = 1000.0 + (random(0, 100) / 10.0);
-    doc["light"] = random(0, 1024);
+    doc["temperature"] = 20.0 + ((esp_random() % 200) / 10.0);
+    doc["humidity"] = 40.0 + ((esp_random() % 400) / 10.0);
+    doc["pressure"] = 1000.0 + ((esp_random() % 100) / 10.0);
+    doc["light"] = esp_random() % 1024;
 
-    String result;
+    std::string result;
     serializeJson(doc, result);
     return result;
 }
@@ -827,7 +867,7 @@ String MitaClient::generateSensorData()
 void MitaClient::setQoSLevel(QoSLevel level)
 {
     qos_level = level;
-    Serial.printf("MitaClient: QoS level set to %s\n",
+    ESP_LOGI(TAG, "MitaClient: QoS level set to %s\n",
                   level == QoSLevel::NO_QOS ? "NO_QOS" : "WITH_ACK");
 }
 
@@ -859,7 +899,7 @@ bool MitaClient::sendDisconnect(DisconnectReason reason)
     packet.payload[0] = static_cast<uint8_t>(reason);
     packet.payload_length = 1;
 
-    Serial.printf("MitaClient: Sending DISCONNECT (reason=0x%02X)\n",
+    ESP_LOGI(TAG, "MitaClient: Sending DISCONNECT (reason=0x%02X)\n",
                   static_cast<uint8_t>(reason));
     return transport->sendPacket(packet);
 }
@@ -871,27 +911,27 @@ bool MitaClient::receiveDisconnectAck()
     // Wait up to 1 second for DISCONNECT_ACK (best effort)
     if (!transport->receivePacket(packet, 1000))
     {
-        Serial.println("MitaClient: No DISCONNECT_ACK received (timeout)");
+        ESP_LOGI(TAG, "%s", "MitaClient: No DISCONNECT_ACK received (timeout)");
         return false;
     }
 
     if (packet.msg_type != MSG_DISCONNECT_ACK)
     {
-        Serial.printf("MitaClient: Expected DISCONNECT_ACK, got msg_type=0x%02X\n",
+        ESP_LOGI(TAG, "MitaClient: Expected DISCONNECT_ACK, got msg_type=0x%02X\n",
                       packet.msg_type);
         return false;
     }
 
-    Serial.println("MitaClient: DISCONNECT_ACK received");
+    ESP_LOGI(TAG, "%s", "MitaClient: DISCONNECT_ACK received");
     return true;
 }
 
 bool MitaClient::waitForAck(uint16_t expected_sequence)
 {
-    unsigned long start_time = millis();
+    unsigned long start_time = ((unsigned long)(esp_timer_get_time() / 1000ULL));
     unsigned int check_count = 0;
 
-    while (millis() - start_time < ACK_TIMEOUT_MS)
+    while (((unsigned long)(esp_timer_get_time() / 1000ULL)) - start_time < ACK_TIMEOUT_MS)
     {
         BasicProtocolPacket packet;
 
@@ -899,7 +939,7 @@ bool MitaClient::waitForAck(uint16_t expected_sequence)
         if (transport->receivePacket(packet, 200))
         {
             check_count++;
-            Serial.printf("MitaClient: Received packet type=0x%02X while waiting for ACK (check #%d)\n",
+            ESP_LOGI(TAG, "MitaClient: Received packet type=0x%02X while waiting for ACK (check #%d)\n",
                           packet.msg_type, check_count);
             if (packet.msg_type == MSG_ACK)
             {
@@ -911,20 +951,20 @@ bool MitaClient::waitForAck(uint16_t expected_sequence)
 
                     if (acked_sequence == expected_sequence)
                     {
-                        unsigned long rtt = millis() - start_time;
-                        Serial.printf("MitaClient: ACK received for sequence %d (RTT: %lu ms, after %d checks)\n", 
+                        unsigned long rtt = ((unsigned long)(esp_timer_get_time() / 1000ULL)) - start_time;
+                        ESP_LOGI(TAG, "MitaClient: ACK received for sequence %d (RTT: %lu ms, after %d checks)\n", 
                                       expected_sequence, rtt, check_count);
                         return true;
                     }
                     else
                     {
-                        Serial.printf("MitaClient: ACK received for wrong sequence (expected %d, got %d)\n",
+                        ESP_LOGI(TAG, "MitaClient: ACK received for wrong sequence (expected %d, got %d)\n",
                                       expected_sequence, acked_sequence);
                     }
                 }
                 else
                 {
-                    Serial.printf("MitaClient: ACK packet with insufficient payload (got %d bytes, need 2)\n",
+                    ESP_LOGI(TAG, "MitaClient: ACK packet with insufficient payload (got %d bytes, need 2)\n",
                                   packet.payload_length);
                 }
             }
@@ -969,15 +1009,18 @@ bool MitaClient::waitForAck(uint16_t expected_sequence)
                     case 0x0A:
                         error_str = "AUTHENTICATION_FAILED";
                         break;
+                    case 0x0B:
+                        error_str = "NOT_AUTHENTICATED";
+                        break;
                     }
 
-                    Serial.printf("MitaClient: ERROR from router: %s (code=0x%02X, seq=%d)\n",
+                    ESP_LOGI(TAG, "MitaClient: ERROR from router: %s (code=0x%02X, seq=%d)\n",
                                   error_str, error_code, failed_seq);
 
                     // Handle specific error codes
                     if (error_code == 0x02) // STALE_TIMESTAMP
                     {
-                        Serial.println("MitaClient: Router reports stale timestamp - session expired, need to re-authenticate");
+                        ESP_LOGI(TAG, "%s", "MitaClient: Router reports stale timestamp - session expired, need to re-authenticate");
                         // Mark as disconnected to force re-authentication
                         handshake_completed = false;
                         crypto_service.clearSessionKey();
@@ -985,16 +1028,27 @@ bool MitaClient::waitForAck(uint16_t expected_sequence)
                     }
                     else if (error_code == 0x07) // SESSION_EXPIRED
                     {
-                        Serial.println("MitaClient: Router reports session expired - need to re-authenticate");
+                        ESP_LOGI(TAG, "%s", "MitaClient: Router reports session expired - need to re-authenticate");
                         handshake_completed = false;
                         crypto_service.clearSessionKey();
+                        return false;
+                    }
+                    else if (error_code == 0x0B) // NOT_AUTHENTICATED
+                    {
+                        ESP_LOGI(TAG, "%s", "MitaClient: Router reports not authenticated - triggering reconnect");
+                        handshake_completed = false;
+                        crypto_service.clearSessionKey();
+                        // Disconnect transport to trigger reconnection
+                        if (transport) {
+                            transport->disconnect();
+                        }
                         return false;
                     }
 
                     // If this error is for our current sequence, treat it as a failed ACK
                     if (failed_seq == expected_sequence)
                     {
-                        Serial.printf("MitaClient: Packet seq=%d rejected by router, stopping retries\n", expected_sequence);
+                        ESP_LOGI(TAG, "MitaClient: Packet seq=%d rejected by router, stopping retries\n", expected_sequence);
                         return false; // Stop retrying - packet was rejected
                     }
                 }
@@ -1017,10 +1071,10 @@ bool MitaClient::waitForAck(uint16_t expected_sequence)
                                               aad, sizeof(aad),
                                               decrypted, decrypted_length))
                 {
-                    String message = String((char *)decrypted, decrypted_length);
-                    Serial.printf("MitaClient: Received message while waiting for ACK: %s\n", message.c_str());
+                    std::string message = std::string((char *)decrypted, decrypted_length);
+                    ESP_LOGI(TAG, "MitaClient: Received message while waiting for ACK: %s\n", message.c_str());
 
-                    String response;
+                    std::string response;
                     if (message_dispatcher.processMessage(message, response))
                     {
                         // Send response without QoS to avoid nested waiting
@@ -1031,18 +1085,18 @@ bool MitaClient::waitForAck(uint16_t expected_sequence)
         }
     }
 
-    unsigned long total_wait = millis() - start_time;
-    Serial.printf("MitaClient: ✗ ACK TIMEOUT for sequence %d (waited %lu ms, %u receive checks, no ACK received)\n", 
+    unsigned long total_wait = ((unsigned long)(esp_timer_get_time() / 1000ULL)) - start_time;
+    ESP_LOGI(TAG, "MitaClient: ✗ ACK TIMEOUT for sequence %d (waited %lu ms, %u receive checks, no ACK received)\n", 
                   expected_sequence, total_wait, check_count);
-    Serial.printf("MitaClient: Router may not be sending ACK or transport layer issue detected\n");
+    ESP_LOGI(TAG, "MitaClient: Router may not be sending ACK or transport layer issue detected\n");
     return false;
 }
 
-bool MitaClient::sendEncryptedMessageWithQoS(uint16_t dest_addr, const String &message, QoSLevel qos)
+bool MitaClient::sendEncryptedMessageWithQoS(uint16_t dest_addr, const std::string &message, QoSLevel qos)
 {
     if (!crypto_service.hasValidSessionKey())
     {
-        Serial.println("MitaClient: No valid session key for encryption");
+        ESP_LOGI(TAG, "%s", "MitaClient: No valid session key for encryption");
         return false;
     }
 
@@ -1052,10 +1106,10 @@ bool MitaClient::sendEncryptedMessageWithQoS(uint16_t dest_addr, const String &m
     // Check if we need to rotate session key
     if (packets_sent >= REKEY_PACKET_THRESHOLD)
     {
-        Serial.println("MitaClient: Packet threshold reached, triggering session rekey");
+        ESP_LOGI(TAG, "%s", "MitaClient: Packet threshold reached, triggering session rekey");
         if (!performSessionRekey())
         {
-            Serial.println("MitaClient: Session rekey failed, continuing with old key");
+            ESP_LOGI(TAG, "%s", "MitaClient: Session rekey failed, continuing with old key");
         }
     }
 
@@ -1094,12 +1148,16 @@ bool MitaClient::sendEncryptedMessageWithQoS(uint16_t dest_addr, const String &m
     aad[4] = (sequence_counter >> 8) & 0xFF;
     aad[5] = sequence_counter & 0xFF;
 
+    ESP_LOGI(TAG, "MitaClient: Encrypting with AAD: src=0x%04X dst=0x%04X seq=%d (AAD: %02X %02X %02X %02X %02X %02X)",
+             assigned_address, dest_addr, sequence_counter,
+             aad[0], aad[1], aad[2], aad[3], aad[4], aad[5]);
+
     size_t encrypted_len;
     if (!crypto_service.encryptGCM((uint8_t *)message.c_str(), message.length(),
                                    aad, sizeof(aad),
                                    packet.payload, encrypted_len))
     {
-        Serial.println("MitaClient: Failed to encrypt message with GCM");
+        ESP_LOGI(TAG, "%s", "MitaClient: Failed to encrypt message with GCM");
         return false;
     }
 
@@ -1112,7 +1170,7 @@ bool MitaClient::sendEncryptedMessageWithQoS(uint16_t dest_addr, const String &m
         {
             if (attempt > 0)
             {
-                Serial.printf("MitaClient: Retry %d/%d for sequence %d\n",
+                ESP_LOGI(TAG, "MitaClient: Retry %d/%d for sequence %d\n",
                               attempt, MAX_RETRIES, sequence_counter);
 
                 // Before retrying, check one more time if ACK arrived
@@ -1125,49 +1183,49 @@ bool MitaClient::sendEncryptedMessageWithQoS(uint16_t dest_addr, const String &m
                         uint16_t acked_seq = (check_packet.payload[0] << 8) | check_packet.payload[1];
                         if (acked_seq == sequence_counter)
                         {
-                            Serial.printf("MitaClient: ACK received before retry for sequence %d\n", sequence_counter);
+                            ESP_LOGI(TAG, "MitaClient: ACK received before retry for sequence %d\n", sequence_counter);
                             return true;
                         }
                     }
                     else if (check_packet.msg_type == MSG_ERROR && check_packet.payload_length >= 3)
                     {
-                        uint8_t error_code = check_packet.payload[0];
                         uint16_t failed_seq = (check_packet.payload[1] << 8) | check_packet.payload[2];
                         if (failed_seq == sequence_counter)
                         {
-                            Serial.printf("MitaClient: ERROR received - packet rejected by router (seq=%d)\n", sequence_counter);
+                            ESP_LOGI(TAG, "MitaClient: ERROR received - packet rejected by router (seq=%d, error=0x%02X)\n", 
+                                     sequence_counter, check_packet.payload[0]);
                             return false;
                         }
                     }
                 }
             }
 
-            Serial.printf("MitaClient: Sending DATA with QoS (seq=%d, attempt=%d, %d bytes)\n",
+            ESP_LOGI(TAG, "MitaClient: Sending DATA with QoS (seq=%d, attempt=%d, %d bytes)\n",
                           sequence_counter, attempt + 1, encrypted_len);
 
             if (!transport->sendPacket(packet))
             {
-                Serial.println("MitaClient: Failed to send packet");
+                ESP_LOGI(TAG, "%s", "MitaClient: Failed to send packet");
                 continue;
             }
 
             // Wait for ACK
             if (waitForAck(sequence_counter))
             {
-                Serial.printf("MitaClient: Message delivered successfully (seq=%d)\n", sequence_counter);
+                ESP_LOGI(TAG, "MitaClient: Message delivered successfully (seq=%d)\n", sequence_counter);
                 return true;
             }
 
             // If this was the last attempt, fail
             if (attempt == MAX_RETRIES)
             {
-                Serial.printf("MitaClient: Failed to deliver message after %d attempts (seq=%d)\n",
+                ESP_LOGI(TAG, "MitaClient: Failed to deliver message after %d attempts (seq=%d)\n",
                               MAX_RETRIES + 1, sequence_counter);
                 return false;
             }
 
             // Wait a bit before retry (exponential backoff)
-            delay(500 * (attempt + 1));
+            vTaskDelay(pdMS_TO_TICKS(500 * (attempt + 1)));
         }
 
         return false;
@@ -1175,12 +1233,12 @@ bool MitaClient::sendEncryptedMessageWithQoS(uint16_t dest_addr, const String &m
     else
     {
         // NO_QOS: Fire and forget
-        Serial.printf("MitaClient: Sending DATA without QoS (seq=%d, %d bytes)\n",
+        ESP_LOGI(TAG, "MitaClient: Sending DATA without QoS (seq=%d, %d bytes)\n",
                       sequence_counter, encrypted_len);
         bool sent = transport->sendPacket(packet);
         if (sent)
         {
-            Serial.printf("MitaClient: Message sent (no ACK expected, seq=%d)\n", sequence_counter);
+            ESP_LOGI(TAG, "MitaClient: Message sent (no ACK expected, seq=%d)\n", sequence_counter);
         }
         return sent;
     }
@@ -1188,7 +1246,7 @@ bool MitaClient::sendEncryptedMessageWithQoS(uint16_t dest_addr, const String &m
 
 bool MitaClient::performSessionRekey()
 {
-    Serial.println("MitaClient: Starting session key rotation");
+    ESP_LOGI(TAG, "%s", "MitaClient: Starting session key rotation");
 
     // Generate new client nonce (nonce3)
     uint8_t new_client_nonce[16];
@@ -1219,21 +1277,21 @@ bool MitaClient::performSessionRekey()
     packet.payload_length = 20;
     
     // Send rekey request
-    Serial.printf("MitaClient: Sending SESSION_REKEY_REQ (packets_sent=%u)\n", packets_sent);
+    ESP_LOGI(TAG, "MitaClient: Sending SESSION_REKEY_REQ (packets_sent=%u)\n", packets_sent);
     if (!transport->sendPacket(packet)) {
-        Serial.println("MitaClient: Failed to send SESSION_REKEY_REQ");
+        ESP_LOGI(TAG, "%s", "MitaClient: Failed to send SESSION_REKEY_REQ");
         return false;
     }
     
     // Wait for SESSION_REKEY_ACK with router's new nonce (nonce4)
-    unsigned long start_time = millis();
-    while (millis() - start_time < 5000) {  // 5 second timeout
+    unsigned long start_time = ((unsigned long)(esp_timer_get_time() / 1000ULL));
+    while (((unsigned long)(esp_timer_get_time() / 1000ULL)) - start_time < 5000) {  // 5 second timeout
         BasicProtocolPacket response;
         if (transport->receivePacket(response, 100)) {
             if (response.msg_type == MSG_SESSION_REKEY_ACK && 
                 response.payload_length == 16) {
                 
-                Serial.println("MitaClient: Received SESSION_REKEY_ACK");
+                ESP_LOGI(TAG, "%s", "MitaClient: Received SESSION_REKEY_ACK");
                 
                 // Extract router's new nonce (nonce4)
                 uint8_t new_router_nonce[16];
@@ -1245,21 +1303,21 @@ bool MitaClient::performSessionRekey()
                     // Reset packet counter
                     packets_sent = 0;
                     
-                    Serial.println("MitaClient: Session key rotated successfully");
-                    Serial.println("MitaClient: ========================================");
-                    Serial.println("MitaClient: Forward secrecy established - old packets");
-                    Serial.println("MitaClient: cannot be decrypted with new session key");
-                    Serial.println("MitaClient: ========================================");
+                    ESP_LOGI(TAG, "%s", "MitaClient: Session key rotated successfully");
+                    ESP_LOGI(TAG, "%s", "MitaClient: ========================================");
+                    ESP_LOGI(TAG, "%s", "MitaClient: Forward secrecy established - old packets");
+                    ESP_LOGI(TAG, "%s", "MitaClient: cannot be decrypted with new session key");
+                    ESP_LOGI(TAG, "%s", "MitaClient: ========================================");
                     return true;
                 } else {
-                    Serial.println("MitaClient: Failed to derive new session key");
+                    ESP_LOGI(TAG, "%s", "MitaClient: Failed to derive new session key");
                     return false;
                 }
             }
         }
-        delay(10);
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
     
-    Serial.println("MitaClient: SESSION_REKEY_ACK timeout");
+    ESP_LOGI(TAG, "%s", "MitaClient: SESSION_REKEY_ACK timeout");
     return false;
 }

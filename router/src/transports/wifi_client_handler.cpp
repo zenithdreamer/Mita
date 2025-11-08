@@ -315,9 +315,10 @@ namespace mita
                     }
                     else
                     {
-                        // Authentication failed
-                        logger_->warning("Authentication verification failed",
+                        // Authentication failed - clear handshake state to allow retry
+                        logger_->warning("Authentication verification failed, clearing handshake state",
                                          core::LogContext().add("device_id", device_id_));
+                        handshake_manager_->remove_handshake(device_id_);
                         running_ = false;
                     }
                 }

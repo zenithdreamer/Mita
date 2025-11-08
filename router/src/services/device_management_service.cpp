@@ -1622,13 +1622,8 @@ namespace mita
             // Works without RTC - both router and client use millis() since boot
             // The 32-bit timestamp wraps every ~49 days (much better than 16-bit's 65 seconds)
 
-            // Get current time in milliseconds since program start
-            // Use a static start time to simulate millis() behavior
-            static auto start_time = std::chrono::steady_clock::now();
-            auto now = std::chrono::steady_clock::now();
-            auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                              now - start_time)
-                              .count();
+            // Get current time in milliseconds using the same origin as protocol packets
+            uint64_t now_ms = protocol::utils::get_current_timestamp_ms();
             uint32_t current_time = static_cast<uint32_t>(now_ms);
 
             // Calculate age with wrap-around handling

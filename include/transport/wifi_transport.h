@@ -1,10 +1,11 @@
 #ifndef WIFI_TRANSPORT_H
 #define WIFI_TRANSPORT_H
 
-#include <WiFi.h>
+#include <string>
+#include <esp_wifi.h>
+#include <esp_netif.h>
 #include <lwip/sockets.h>
 #include <lwip/ip.h>
-#include <lwip/raw.h>
 #include "../../shared/protocol/transport_interface.h"
 #include "../../shared/protocol/protocol_types.h"
 #include "../../shared/transport/transport_constants.h"
@@ -13,21 +14,22 @@ class WiFiTransport : public ITransport {
 private:
     int raw_socket;
     bool connected;
-    String discovered_ssid;
-    String shared_secret;
-    IPAddress router_ip;
+    std::string discovered_ssid;
+    std::string shared_secret;
+    uint32_t router_ip;  // IP address as uint32_t
+    uint32_t local_ip;   // Local IP address as uint32_t
 
     bool scanForRouter();
     bool connectToAP();
     bool createRawSocket();
 
     // Raw IP packet handling
-    bool sendRawPacket(const uint8_t *data, size_t length, const IPAddress &dest_ip);
-    bool receiveRawPacket(uint8_t *buffer, size_t &length, IPAddress &source_ip, unsigned long timeout_ms);
+    bool sendRawPacket(const uint8_t *data, size_t length, uint32_t dest_ip);
+    bool receiveRawPacket(uint8_t *buffer, size_t &length, uint32_t &source_ip, unsigned long timeout_ms);
 
 public:
     WiFiTransport();
-    WiFiTransport(const String& shared_secret);
+    WiFiTransport(const std::string& shared_secret);
     ~WiFiTransport() override;
 
     bool connect() override;
@@ -38,7 +40,7 @@ public:
     bool receivePacket(BasicProtocolPacket& packet, unsigned long timeout_ms = 1000) override;
 
     TransportType getType() const override;
-    String getConnectionInfo() const override;
+    std::string getConnectionInfo() const override;
 
     // WiFi-specific methods
     int getSignalStrength() const;

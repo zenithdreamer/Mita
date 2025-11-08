@@ -1,7 +1,10 @@
 #ifndef MITA_CLIENT_H
 #define MITA_CLIENT_H
 
-#include <Arduino.h>
+#include <string>
+#include <cstring>
+#include <esp_log.h>
+#include <esp_timer.h>
 #include <ArduinoJson.h>
 #include "../../shared/protocol/transport_interface.h"
 #include "../crypto/crypto_service.h"
@@ -37,13 +40,6 @@ private:
     uint32_t packets_sent;                // Count packets since last rekey
     static const uint32_t REKEY_PACKET_THRESHOLD = 1000;  // Rekey after 1000 packets
 
-    // Timestamp validation state (instance variables)
-    uint64_t challenge_baseline_timestamp;
-    unsigned long challenge_baseline_millis;
-
-    // Helper to get router-synchronized timestamp
-    uint32_t getAdjustedTimestamp() const;
-
     // Timing
     unsigned long last_heartbeat;
     unsigned long last_sensor_reading;
@@ -51,10 +47,18 @@ private:
     static const unsigned long HEARTBEAT_INTERVAL = 10000;
     static const unsigned long SENSOR_INTERVAL = 10000;
 
+    // Timestamp validation state (instance variables)
+    uint64_t challenge_baseline_timestamp;
+    unsigned long challenge_baseline_millis;
+
+    // QoS configuration
     // QoS configuration
     QoSLevel qos_level;
     static const unsigned long ACK_TIMEOUT_MS = 5000;  // Wait 5s for ACK
     static const uint8_t MAX_RETRIES = 3;              // Retry up to 3 times
+
+    // Helper to get router-synchronized timestamp
+    uint32_t getAdjustedTimestamp() const;
 
     // Handshake methods
     bool performHandshake();
@@ -70,12 +74,12 @@ private:
 
     // Message handling
     void handleIncomingMessages();
-    bool sendEncryptedMessage(uint16_t dest_addr, const String &message);
-    bool sendEncryptedMessageWithQoS(uint16_t dest_addr, const String &message, QoSLevel qos);
+    bool sendEncryptedMessage(uint16_t dest_addr, const std::string &message);
+    bool sendEncryptedMessageWithQoS(uint16_t dest_addr, const std::string &message, QoSLevel qos);
     bool waitForAck(uint16_t expected_sequence);
 
     // Utility methods
-    String generateSensorData();
+    std::string generateSensorData();
     void printConnectionStatus();
 
 public:
@@ -85,7 +89,7 @@ public:
     // Main lifecycle methods
     bool initialize();
     bool connectToNetwork(ITransport *transport_impl);
-    bool connectToNetworkSmart(ProtocolSelector* selector, const String& shared_secret);  // Smart connection with protocol selection
+    bool connectToNetworkSmart(ProtocolSelector* selector, const std::string& shared_secret);  // Smart connection with protocol selection
     void disconnect();
     void disconnect(DisconnectReason reason);  // Graceful disconnect with reason
     void update();
@@ -94,7 +98,7 @@ public:
     bool isConnected() const;
     TransportType getTransportType() const;
     uint16_t getAssignedAddress() const;
-    String getDeviceId() const;
+    std::string getDeviceId() const;
 
     // Messaging methods
     bool sendHeartbeat();

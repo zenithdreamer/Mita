@@ -1,10 +1,17 @@
 #ifndef PROTOCOL_SELECTOR_H
 #define PROTOCOL_SELECTOR_H
 
-#include <Arduino.h>
-#include <Preferences.h>
+#include <string>
+#include <nvs_flash.h>
+#include <nvs.h>
+#include <esp_timer.h>
 #include "../../shared/protocol/transport_interface.h"
 #include "../../shared/protocol/protocol_types.h"
+
+// Helper function for millis() replacement
+inline unsigned long millis() {
+    return (unsigned long)(esp_timer_get_time() / 1000ULL);
+}
 
 // Connection statistics for learning
 struct ConnectionStats {
@@ -38,8 +45,8 @@ enum class SelectionStrategy {
 
 class ProtocolSelector {
 private:
-    Preferences prefs;
-    String device_id;
+    std::string device_id;
+    nvs_handle_t nvs_handle;
 
     // Statistics for each protocol
     ConnectionStats wifi_stats;
@@ -52,13 +59,12 @@ private:
     // Helper methods
     void loadStatsFromNVRAM();
     void saveStatsToNVRAM();
-    void updateStats(TransportType type, bool success, int connect_time_ms, int signal_strength);
     int quickScanWiFi();  // Quick scan to check if WiFi is available, returns RSSI or -1
     int quickScanBLE();   // Quick scan to check if BLE is available, returns signal or -1
     float calculateScore(const ConnectionStats& stats, int current_signal) const;
 
 public:
-    ProtocolSelector(const String& device_id, SelectionStrategy strategy = SelectionStrategy::ADAPTIVE);
+    ProtocolSelector(const std::string& device_id, SelectionStrategy strategy = SelectionStrategy::ADAPTIVE);
     ~ProtocolSelector();
 
     // Main selection method
@@ -68,23 +74,19 @@ public:
     void getProtocolPriority(TransportType* priority_list, size_t& count);
 
     // Report connection results for learning
-    void reportConnectionAttempt(TransportType type, bool success, int connect_time_ms = 0, int signal_strength = 0);
+    void updateStats(TransportType type, bool success, int connect_time_ms, int signal_strength);
 
     // Configuration
     void setStrategy(SelectionStrategy strategy);
-    SelectionStrategy getStrategy() const { return strategy; }
-    void setPersistence(bool enable) { persist_stats = enable; }
+    SelectionStrategy getStrategy() const;
 
     // Statistics access
     const ConnectionStats& getWiFiStats() const { return wifi_stats; }
     const ConnectionStats& getBLEStats() const { return ble_stats; }
     void resetStats();
 
-    // Manual override for testing
-    void forceProtocol(TransportType type);
-
     // Debugging
-    void printStats() const;
+    void printStats();
 };
 
 #endif // PROTOCOL_SELECTOR_H

@@ -1,13 +1,19 @@
 #include "../include/messaging/message_handler.h"
+#include <esp_log.h>
+#include <esp_timer.h>
+#include <esp_system.h>
+#include <driver/gpio.h>
+
+static const char *TAG = "MESSAGE_HANDLER";
 
 #ifndef LED_BUILTIN
-#define LED_BUILTIN 2
+#define LED_BUILTIN GPIO_NUM_2
 #endif
 
 // CommandHandler implementation
-CommandHandler::CommandHandler(const String &device_id) : device_id(device_id) {}
+CommandHandler::CommandHandler(const std::string &device_id) : device_id(device_id) {}
 
-bool CommandHandler::canHandle(const String &message_type) const
+bool CommandHandler::canHandle(const std::string &message_type) const
 {
     return message_type == "command";
 }
@@ -23,9 +29,9 @@ bool CommandHandler::handleMessage(const DynamicJsonDocument &message, DynamicJs
     response["type"] = "command_response";
     response["device_id"] = device_id;
     response["command"] = command;
-    response["timestamp"] = millis();
+    response["timestamp"] = ((unsigned long)(esp_timer_get_time() / 1000ULL));
 
-    String cmd_str(command);
+    std::string cmd_str(command);
 
     if (cmd_str == "status")
     {
@@ -49,8 +55,8 @@ bool CommandHandler::handleMessage(const DynamicJsonDocument &message, DynamicJs
 bool CommandHandler::handleStatusCommand(DynamicJsonDocument &response)
 {
     response["status"] = "online";
-    response["uptime"] = millis() / 1000;
-    response["free_heap"] = ESP.getFreeHeap();
+    response["uptime"] = ((unsigned long)(esp_timer_get_time() / 1000ULL)) / 1000;
+    response["free_heap"] = esp_get_free_heap_size();
     return true;
 }
 
@@ -61,25 +67,25 @@ bool CommandHandler::handleRestartCommand(DynamicJsonDocument &response)
     return true;
 }
 
-bool CommandHandler::handleLedCommand(const String &command, DynamicJsonDocument &response)
+bool CommandHandler::handleLedCommand(const std::string &command, DynamicJsonDocument &response)
 {
     if (command == "led_on")
     {
-        digitalWrite(LED_BUILTIN, HIGH);
+        gpio_set_level(LED_BUILTIN, 1);
         response["status"] = "led_on";
     }
     else if (command == "led_off")
     {
-        digitalWrite(LED_BUILTIN, LOW);
+        gpio_set_level(LED_BUILTIN, 0);
         response["status"] = "led_off";
     }
     return true;
 }
 
 // PingHandler implementation
-PingHandler::PingHandler(const String &device_id) : device_id(device_id) {}
+PingHandler::PingHandler(const std::string &device_id) : device_id(device_id) {}
 
-bool PingHandler::canHandle(const String &message_type) const
+bool PingHandler::canHandle(const std::string &message_type) const
 {
     return message_type == "ping";
 }
@@ -88,7 +94,7 @@ bool PingHandler::handleMessage(const DynamicJsonDocument &message, DynamicJsonD
 {
     response["type"] = "pong";
     response["device_id"] = device_id;
-    response["timestamp"] = millis();
+    response["timestamp"] = ((unsigned long)(esp_timer_get_time() / 1000ULL));
 
     if (message.containsKey("ping_id"))
     {
@@ -125,26 +131,26 @@ bool MessageDispatcher::addHandler(IMessageHandler *handler)
     return true;
 }
 
-bool MessageDispatcher::processMessage(const String &json_message, String &response)
+bool MessageDispatcher::processMessage(const std::string &json_message, std::string &response)
 {
     DynamicJsonDocument message_doc(256);
     DeserializationError error = deserializeJson(message_doc, json_message);
 
     if (error)
     {
-        Serial.printf("MessageDispatcher: JSON parse error: %s\n", error.c_str());
+        ESP_LOGI(TAG, "MessageDispatcher: JSON parse error: %s\n", error.c_str());
         return false;
     }
 
     const char *type = message_doc["type"];
     if (!type)
     {
-        Serial.println("MessageDispatcher: No message type found");
+        ESP_LOGI(TAG, "%s", "MessageDispatcher: No message type found");
         return false;
     }
 
-    String message_type(type);
-    Serial.printf("MessageDispatcher: Processing message type: %s\n", message_type.c_str());
+    std::string message_type(type);
+    ESP_LOGI(TAG, "MessageDispatcher: Processing message type: %s\n", message_type.c_str());
 
     // Find appropriate handler
     for (size_t i = 0; i < handler_count; i++)
@@ -156,17 +162,17 @@ bool MessageDispatcher::processMessage(const String &json_message, String &respo
             if (handlers[i]->handleMessage(message_doc, response_doc))
             {
                 serializeJson(response_doc, response);
-                Serial.printf("MessageDispatcher: Response generated: %s\n", response.c_str());
+                ESP_LOGI(TAG, "MessageDispatcher: Response generated: %s\n", response.c_str());
                 return true;
             }
             else
             {
-                Serial.printf("MessageDispatcher: Handler failed for type: %s\n", message_type.c_str());
+                ESP_LOGI(TAG, "MessageDispatcher: Handler failed for type: %s\n", message_type.c_str());
                 return false;
             }
         }
     }
 
-    Serial.printf("MessageDispatcher: No handler found for message type: %s\n", message_type.c_str());
+    ESP_LOGI(TAG, "MessageDispatcher: No handler found for message type: %s\n", message_type.c_str());
     return false;
 }

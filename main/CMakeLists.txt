@@ -1,0 +1,22 @@
+idf_component_register(
+    SRCS 
+        "main.cpp"
+        "core/mita_client.cpp"
+        "transport/ble_transport.cpp"
+        "transport/wifi_transport.cpp"
+        "transport/protocol_selector.cpp"
+        "messaging/message_handler.cpp"
+        "crypto/crypto_service.cpp"
+    INCLUDE_DIRS 
+        "."
+        "../include"
+        "../shared"
+    REQUIRES 
+        nvs_flash 
+        esp_wifi 
+        esp_netif
+        lwip
+        bt
+        mbedtls
+        json
+)

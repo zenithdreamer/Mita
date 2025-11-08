@@ -1,7 +1,9 @@
 #ifndef CRYPTO_SERVICE_H
 #define CRYPTO_SERVICE_H
 
-#include <Arduino.h>
+#include <cstring>
+#include <cstdint>
+#include <string>
 #include <mbedtls/md.h>
 #include <mbedtls/aes.h>
 #include <mbedtls/gcm.h>
@@ -35,11 +37,11 @@ public:
 
     // Per-device PSK derivation (matches router implementation)
     // Derives: Device_PSK = HMAC-SHA256(master_secret, "DEVICE_PSK" || device_id)
-    static bool deriveDevicePSK(const String &master_secret, const String &device_id, 
+    static bool deriveDevicePSK(const std::string &master_secret, const std::string &device_id, 
                                uint8_t *device_psk_out);
 
     // Session key management
-    bool deriveSessionKey(const String &shared_secret, const uint8_t *nonce1, const uint8_t *nonce2);
+    bool deriveSessionKey(const std::string &shared_secret, const uint8_t *nonce1, const uint8_t *nonce2);
     bool rekeySession(const uint8_t *nonce3, const uint8_t *nonce4);  // Rekey from old session key
     bool hasValidSessionKey() const;
     void clearSessionKey();

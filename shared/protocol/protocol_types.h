@@ -7,6 +7,7 @@
 #else
 #include <stdint.h>
 #include <cstddef>
+#include <string>
 #endif
 
 // Protocol constants
@@ -170,9 +171,9 @@ struct NetworkConfig
     String device_id;
     // Note: use_device_psk removed - ALWAYS uses device PSK for security
 #else
-    char router_id[64];
-    char shared_secret[32];
-    char device_id[32];
+    std::string router_id;
+    std::string shared_secret;      // Master secret - always derives device PSK
+    std::string device_id;
 #endif
 };
 

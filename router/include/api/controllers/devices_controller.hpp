@@ -7,7 +7,6 @@
 #include "services/device_management_service.hpp"
 #include "transports/wifi_transport.hpp"
 #include "transports/ble/ble_transport.hpp"
-#include "transports/ble/ble_device_handler.hpp"
 
 #include OATPP_CODEGEN_BEGIN(ApiController)
 
@@ -86,14 +85,12 @@ public:
             // Get BLE devices
             if (m_ble) {
                 auto ble_handlers = m_ble->get_all_device_handlers();
-                for (auto& handler : ble_handlers) {
-                    if (handler) {
-                        auto dto = DeviceDto::createShared();
-                        dto->device_id = handler->get_device_id();
-                        dto->device_type = "ble";
-                        dto->status = handler->is_connected() ? "connected" : "disconnected";
-                        devicesVector->push_back(dto);
-                    }
+                for (const auto& handler : ble_handlers) {
+                    auto dto = DeviceDto::createShared();
+                    dto->device_id = handler.first;  // device_id is first in pair
+                    dto->device_type = "ble";
+                    dto->status = "connected";  // All returned handlers are connected
+                    devicesVector->push_back(dto);
                 }
             }
 

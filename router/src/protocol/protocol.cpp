@@ -15,6 +15,9 @@ namespace mita
 {
     namespace protocol
     {
+        // Shared steady_clock reference point for all timestamp calculations
+        // This ensures consistent relative time across handshake operations
+        static const auto steady_clock_start = std::chrono::steady_clock::now();
 
         // ProtocolPacket implementation
         ProtocolPacket::ProtocolPacket(MessageType msg_type, uint16_t source_addr,
@@ -874,9 +877,10 @@ namespace mita
             return derived_key;
         }
 
-        bool HandshakeManager::process_hello_packet(const ProtocolPacket &packet, std::string &device_id)
+        bool HandshakeManager::process_hello_packet(const ProtocolPacket &packet, std::string &device_id, std::vector<uint8_t> &nonce1)
         {
-            // Simplified implementation - extract device_id from payload
+            // Extract device_id and nonce1 from payload
+            // HELLO payload format: router_id_len | router_id | device_id_len | device_id | nonce1(16 bytes)
             const auto &payload = packet.get_payload();
             if (payload.size() < 2)
                 return false;
@@ -896,6 +900,20 @@ namespace mita
                 return false;
 
             device_id = std::string(payload.begin() + offset, payload.begin() + offset + device_id_len);
+            offset += device_id_len;
+            
+            // Extract nonce1 (16 bytes)
+            if (offset + NONCE_SIZE > payload.size())
+            {
+                auto logger = core::get_logger("Protocol");
+                if (logger)
+                    logger->warning("HELLO packet missing nonce1", 
+                                  core::LogContext().add("payload_size", payload.size()));
+                return false;
+            }
+            
+            nonce1.assign(payload.begin() + offset, payload.begin() + offset + NONCE_SIZE);
+            
             return received_router_id == router_id_;
         }
 
@@ -1090,12 +1108,11 @@ namespace mita
             
             auto nonce2 = generate_nonce();
 
-            // Get current timestamp using same clock as validation (steady_clock since program start)
-            // This matches the validation in DeviceManagementService::validate_packet_timestamp
-            static auto start_time = std::chrono::steady_clock::now();
+            // Get current timestamp using shared steady_clock reference point
+            // This ensures consistent timestamps between create_challenge and verify_auth
             auto now = std::chrono::steady_clock::now();
             uint64_t timestamp_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                                        now - start_time)
+                                        now - steady_clock_start)
                                         .count();
 
             // Store / update handshake state with nonce1 and nonce2
@@ -1151,9 +1168,10 @@ namespace mita
             // Validate handshake freshness (10 second window - reduced from 30s)
             if (it->second.creation_time_ms > 0)
             {
-                auto now = std::chrono::system_clock::now();
+                // Use shared steady_clock reference point (same as CHALLENGE creation)
+                auto now = std::chrono::steady_clock::now();
                 uint64_t current_time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                    now.time_since_epoch()).count();
+                    now - steady_clock_start).count();
                 
                 const uint64_t MAX_HANDSHAKE_AGE_MS = 10000;  // 10 seconds (reduced from 30)
                 uint64_t handshake_age = current_time_ms - it->second.creation_time_ms;
@@ -1325,6 +1343,13 @@ namespace mita
         // Utility functions
         namespace utils
         {
+            uint64_t get_current_timestamp_ms()
+            {
+                auto now = std::chrono::steady_clock::now();
+                return std::chrono::duration_cast<std::chrono::milliseconds>(
+                           now - steady_clock_start)
+                           .count();
+            }
 
             bool parse_hello_packet(const ProtocolPacket &packet, std::string &router_id,
                                     std::string &device_id, std::vector<uint8_t> &nonce1)

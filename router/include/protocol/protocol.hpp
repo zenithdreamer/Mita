@@ -174,7 +174,7 @@ namespace mita
                                                                    uint16_t assigned_address);
 
             // Handshake packet processing
-            bool process_hello_packet(const ProtocolPacket &packet, std::string &device_id);
+            bool process_hello_packet(const ProtocolPacket &packet, std::string &device_id, std::vector<uint8_t> &nonce1);
             bool verify_auth_packet(const std::string &device_id, const ProtocolPacket &packet);
 
             // Session management
@@ -228,6 +228,11 @@ namespace mita
          */
         namespace utils
         {
+            /**
+             * Get current timestamp in milliseconds since router start
+             * Uses the same time origin as handshake packets for consistency
+             */
+            uint64_t get_current_timestamp_ms();
 
             /**
              * Parse HELLO packet payload

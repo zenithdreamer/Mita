@@ -1,4 +1,7 @@
 #include "../include/crypto/crypto_service.h"
+#include <esp_log.h>
+
+static const char *TAG = "CRYPTO_SERVICE";
 
 CryptoService::CryptoService() : session_key_valid(false), iv_counter(0), session_salt(0)
 {
@@ -56,7 +59,7 @@ bool CryptoService::computeHMAC(const uint8_t *key, size_t key_len,
 // Derive device-specific PSK from master secret
 // This matches the router's implementation for compatibility
 // Device_PSK = HMAC-SHA256(master_secret, "DEVICE_PSK" || device_id)
-bool CryptoService::deriveDevicePSK(const String &master_secret, const String &device_id, 
+bool CryptoService::deriveDevicePSK(const std::string &master_secret, const std::string &device_id, 
                                    uint8_t *device_psk_out)
 {
     if (!device_psk_out)
@@ -65,7 +68,7 @@ bool CryptoService::deriveDevicePSK(const String &master_secret, const String &d
     }
 
     // Build data: "DEVICE_PSK" || device_id
-    String prefix = "DEVICE_PSK";
+    std::string prefix = "DEVICE_PSK";
     size_t data_len = prefix.length() + device_id.length();
     uint8_t *data = new uint8_t[data_len];
     
@@ -102,17 +105,17 @@ bool CryptoService::deriveDevicePSK(const String &master_secret, const String &d
     
     if (result)
     {
-        Serial.println("CryptoService: Device PSK derived successfully");
+        ESP_LOGI(TAG, "%s", "CryptoService: Device PSK derived successfully");
     }
     else
     {
-        Serial.println("CryptoService: Failed to derive device PSK");
+        ESP_LOGI(TAG, "%s", "CryptoService: Failed to derive device PSK");
     }
     
     return result;
 }
 
-bool CryptoService::deriveSessionKey(const String &shared_secret, const uint8_t *nonce1, const uint8_t *nonce2)
+bool CryptoService::deriveSessionKey(const std::string &shared_secret, const uint8_t *nonce1, const uint8_t *nonce2)
 {
     // SessionKey = HMAC_SHA256(PSK, Nonce1 || Nonce2)
     uint8_t nonce_data[NONCE_SIZE * 2];
@@ -120,7 +123,7 @@ bool CryptoService::deriveSessionKey(const String &shared_secret, const uint8_t 
     memcpy(nonce_data + NONCE_SIZE, nonce2, NONCE_SIZE);
 
     uint8_t session_hmac[HMAC_SIZE];
-    if (!computeHMAC((uint8_t *)shared_secret.c_str(), shared_secret.length(),
+    if (!computeHMAC((uint8_t *)shared_secret.data(), shared_secret.length(),
                      nonce_data, NONCE_SIZE * 2, session_hmac))
     {
         return false;
@@ -133,7 +136,7 @@ bool CryptoService::deriveSessionKey(const String &shared_secret, const uint8_t 
     // Reset IV counter for new session
     iv_counter = 0;
 
-    Serial.println("CryptoService: Session key derived successfully");
+    ESP_LOGI(TAG, "%s", "CryptoService: Session key derived successfully");
     return true;
 }
 
@@ -141,7 +144,7 @@ bool CryptoService::rekeySession(const uint8_t *nonce3, const uint8_t *nonce4)
 {
     if (!session_key_valid)
     {
-        Serial.println("CryptoService: Cannot rekey - no valid session key");
+        ESP_LOGI(TAG, "%s", "CryptoService: Cannot rekey - no valid session key");
         return false;
     }
     
@@ -155,7 +158,7 @@ bool CryptoService::rekeySession(const uint8_t *nonce3, const uint8_t *nonce4)
     if (!computeHMAC(session_key, SESSION_KEY_SIZE,
                      nonce_data, NONCE_SIZE * 2, new_session_hmac))
     {
-        Serial.println("CryptoService: Failed to compute HMAC during rekey");
+        ESP_LOGI(TAG, "%s", "CryptoService: Failed to compute HMAC during rekey");
         return false;
     }
     
@@ -168,7 +171,7 @@ bool CryptoService::rekeySession(const uint8_t *nonce3, const uint8_t *nonce4)
     // Generate new session salt
     session_salt = esp_random();
     
-    Serial.println("CryptoService: Session key rekeyed successfully");
+    ESP_LOGI(TAG, "%s", "CryptoService: Session key rekeyed successfully");
     return true;
 }
 
@@ -249,7 +252,7 @@ bool CryptoService::encryptGCM(const uint8_t *plaintext, size_t plaintext_len,
     // Check for counter overflow - force session rekey
     if (iv_counter == 0 && current_counter != 0)
     {
-        Serial.println("CryptoService: CRITICAL - IV counter overflow, forcing rekey");
+        ESP_LOGI(TAG, "%s", "CryptoService: CRITICAL - IV counter overflow, forcing rekey");
         clearSessionKey();
         return false;  // Force handshake restart
     }
@@ -322,7 +325,7 @@ bool CryptoService::decryptGCM(const uint8_t *input, size_t input_len,
                                  ciphertext, plaintext) != 0)
     {
         mbedtls_gcm_free(&gcm);
-        Serial.println("CryptoService: GCM authentication failed - data may be tampered");
+        ESP_LOGI(TAG, "%s", "CryptoService: GCM authentication failed - data may be tampered");
         return false;
     }
 

@@ -1,56 +1,61 @@
 #ifndef BLE_TRANSPORT_H
 #define BLE_TRANSPORT_H
 
-#include <BLEDevice.h>
-#include <BLEClient.h>
-#include <BLEUtils.h>
-#include <BLEScan.h>
-#include <BLEAdvertisedDevice.h>
-#include <BLE2902.h>
+#include <string>
+#include <cstring>
+#include "host/ble_hs.h"
+#include "host/ble_uuid.h"
+#include "host/ble_gap.h"
+#include "nimble/nimble_port.h"
+#include "nimble/nimble_port_freertos.h"
 #include "../../shared/protocol/transport_interface.h"
 #include "../../shared/protocol/protocol_types.h"
 #include "../../shared/transport/transport_constants.h"
 
+// L2CAP CoC parameters for MITA protocol
+#define MITA_L2CAP_PSM 0x0081
+#define MITA_L2CAP_MTU 512
+
 // Forward declarations
 class BLETransport;
 
-// BLE Client Callbacks - handle connection/disconnection events
-class MitaBLEClientCallbacks : public BLEClientCallbacks {
-private:
-    BLETransport* transport;
-
-public:
-    MitaBLEClientCallbacks(BLETransport* transport);
-    void onConnect(BLEClient* pClient) override;
-    void onDisconnect(BLEClient* pClient) override;
-};
-
-// BLE Transport - Client Mode (connects TO router)
+// BLE Transport - Client Mode (connects TO router) using NimBLE L2CAP CoC
 class BLETransport : public ITransport {
 private:
-    BLEClient* client;
-    BLERemoteCharacteristic* characteristic;
-    BLEAdvertisedDevice* router_device;
-    String device_id;
-    String router_id;
-
+    std::string device_id;
+    std::string router_id;
+    
+    uint16_t conn_handle;
+    struct ble_l2cap_chan *coc_chan;  // L2CAP CoC channel
+    
     bool ble_connected;
-    bool client_connected;
-
+    bool scanning;
+    bool coc_connected;
+    
     // Packet buffering
     uint8_t packet_buffer[HEADER_SIZE + MAX_PAYLOAD_SIZE];
     size_t packet_length;
     bool packet_available;
+    
+    // Target router address
+    ble_addr_t router_addr;
+    bool router_found;
 
     // Client mode methods
     bool scanForRouter();
     bool connectToRouter();
-
-    // Static instance pointer for notification callback
+    bool openCoCChannel();
+    bool queueReceiveBuffer();
+    
+    // Static instance pointer for callbacks
     static BLETransport* instance;
+    
+    // NimBLE callbacks (static)
+    static int gap_event_handler(struct ble_gap_event *event, void *arg);
+    static int coc_event_handler(struct ble_l2cap_event *event, void *arg);
 
 public:
-    BLETransport(const String& device_id, const String& router_id);
+    BLETransport(const std::string& device_id, const std::string& router_id);
     ~BLETransport() override;
 
     bool connect() override;
@@ -61,15 +66,15 @@ public:
     bool receivePacket(BasicProtocolPacket& packet, unsigned long timeout_ms = 1000) override;
 
     TransportType getType() const override;
-    String getConnectionInfo() const override;
+    std::string getConnectionInfo() const override;
 
     // BLE callback handlers
-    void onServerConnect();
-    void onServerDisconnect();
-    void onDataReceived(const uint8_t* data, size_t length);
-
-    // Static notification callback for BLE characteristic
-    static void notifyCallback(BLERemoteCharacteristic* pChar, uint8_t* data, size_t length, bool isNotify);
+    void onGapConnect();
+    void onGapDisconnect();
+    void onCoCConnected(struct ble_l2cap_chan *chan);
+    void onCoCDisconnected(struct ble_l2cap_chan *chan);
+    void onCoCDataReceived(struct os_mbuf *sdu);
+    void onDeviceFound(const struct ble_gap_disc_desc *disc);
 };
 
 #endif // BLE_TRANSPORT_H

@@ -12,7 +12,6 @@ option(BUILD_TESTS "Build tests" ON)
 # Always enable WiFi and BLE;
 set(ENABLE_WIFI ON)
 set(ENABLE_BLE ON)
-set(USE_SIMPLEBLUEZ ON)
 
 # Platform-specific settings for Raspberry Pi
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64" OR CMAKE_SYSTEM_PROCESSOR MATCHES "armv7l")
@@ -65,29 +64,9 @@ list(APPEND TRANSPORT_SOURCES ${WIFI_SOURCES})
 # New BLE sources from ble/ subdirectory
 file(GLOB_RECURSE BLE_SOURCES "src/transports/ble/*.cpp")
 list(APPEND TRANSPORT_SOURCES ${BLE_SOURCES})
-add_definitions(-DUSE_SIMPLEBLUEZ)
-
-# Fetch SimpleBLE
-include(FetchContent)
-FetchContent_Declare(simpleble
-    GIT_REPOSITORY https://github.com/OpenBluetoothToolbox/SimpleBLE.git
-    GIT_TAG v0.10.3
-    SOURCE_SUBDIR simpleble
-)
-FetchContent_MakeAvailable(simpleble)
-
-# Suppress warnings from SimpleBLE and its dependencies
-if(TARGET simpleble)
-    target_compile_options(simpleble PRIVATE -w)
-endif()
-if(TARGET simplebluez)
-    target_compile_options(simplebluez PRIVATE -w)
-endif()
-if(TARGET simpledbus)
-    target_compile_options(simpledbus PRIVATE -w)
-endif()
 
 # Fetch sqlite_orm (header-only ORM library)
+include(FetchContent)
 FetchContent_Declare(sqlite_orm
     GIT_REPOSITORY https://github.com/fnc12/sqlite_orm.git
     GIT_TAG v1.9
@@ -188,9 +167,9 @@ target_include_directories(mita_router PRIVATE ${DBUS_INCLUDE_DIRS} ${NM_INCLUDE
 target_compile_definitions(mita_router PRIVATE ENABLE_WIFI)
 
 # BLE-specific libraries
-target_link_libraries(mita_router simpleble bluetooth)
+target_link_libraries(mita_router bluetooth)
 
-target_compile_definitions(mita_router PRIVATE ENABLE_BLE USE_SIMPLEBLUEZ)
+target_compile_definitions(mita_router PRIVATE ENABLE_BLE)
 
 # Install targets
 install(TARGETS mita_router DESTINATION bin)
@@ -215,7 +194,6 @@ endif()
 message(STATUS "=== Mita Router Configuration ===")
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 message(STATUS "WiFi transport: ON (forced)")
-message(STATUS "BLE transport: ON (forced, SimpleBluez)")
-message(STATUS "Use SimpleBluez: ON (mandatory)")
+message(STATUS "BLE transport: ON (L2CAP)")
 message(STATUS "Raspberry Pi: ${RASPBERRY_PI}")
 message(STATUS "Build tests: ${BUILD_TESTS}")

@@ -67,7 +67,8 @@ namespace transports {
 
         // Raw socket
         int raw_socket_;
-        std::string local_ip_; // Router's local IP address
+        std::string local_ip_;    // Router's local IP address (main network interface)
+        std::string wifi_ap_ip_;  // WiFi AP interface IP address
 
         // Client management (maps device_id to handler)
         mutable std::recursive_mutex clients_mutex_; // Recursive to allow reentrant calls from handler callbacks

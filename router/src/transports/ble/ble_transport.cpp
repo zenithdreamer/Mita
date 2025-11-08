@@ -1,11 +1,15 @@
 #include "transports/ble/ble_transport.hpp"
-#include "transports/ble/ble_device_handler.hpp"
 #include "core/config.hpp"
 #include "core/logger.hpp"
 #include "services/routing_service.hpp"
 #include "services/device_management_service.hpp"
 #include "services/statistics_service.hpp"
+#include "services/packet_monitor_service.hpp"
 #include "protocol/protocol.hpp"
+#include <cstring>
+#include <climits>
+#include <thread>
+#include <chrono>
 
 namespace mita
 {
@@ -14,6 +18,340 @@ namespace mita
         namespace ble
         {
 
+            // ========== CoCClientHandler Implementation ==========
+
+            CoCClientHandler::CoCClientHandler(
+                int client_fd,
+                const std::string &device_address,
+                const core::RouterConfig &config,
+                services::RoutingService &routing_service,
+                services::DeviceManagementService &device_management,
+                services::StatisticsService &statistics_service,
+                std::shared_ptr<services::PacketMonitorService> packet_monitor)
+                : config_(config),
+                  routing_service_(routing_service),
+                  device_management_(device_management),
+                  statistics_service_(statistics_service),
+                  client_fd_(client_fd),
+                  device_address_(device_address),
+                  assigned_address_(0),
+                  connected_(true),
+                  authenticated_(false),
+                  packet_monitor_(packet_monitor),
+                  logger_(core::get_logger("CoCClientHandler"))
+            {
+                // Initialize handshake manager
+                handshake_manager_ = std::make_unique<protocol::HandshakeManager>(
+                    config_.router_id,
+                    config_.shared_secret);
+
+                logger_->info("Client handler created",
+                              core::LogContext()
+                                  .add("client_fd", client_fd)
+                                  .add("device_addr", device_address));
+            }
+
+            CoCClientHandler::~CoCClientHandler()
+            {
+                disconnect();
+            }
+
+            void CoCClientHandler::disconnect()
+            {
+                if (connected_)
+                {
+                    connected_ = false;
+                    logger_->info("Client disconnected",
+                                  core::LogContext()
+                                      .add("device_id", device_id_)
+                                      .add("device_addr", device_address_));
+                }
+            }
+
+            bool CoCClientHandler::send_packet(const protocol::ProtocolPacket &packet)
+            {
+                if (!connected_)
+                {
+                    logger_->warning("Cannot send packet - not connected");
+                    return false;
+                }
+
+                try
+                {
+                    // Capture outbound packet for monitoring
+                    if (packet_monitor_)
+                    {
+                        packet_monitor_->capture_packet(packet, "outbound", core::TransportType::BLE);
+                    }
+
+                    std::vector<uint8_t> serialized = packet.to_bytes();
+
+                    // Send via L2CAP CoC socket
+                    ssize_t sent = send(client_fd_, serialized.data(), serialized.size(), 0);
+                    if (sent < 0)
+                    {
+                        logger_->error("Failed to send packet",
+                                       core::LogContext()
+                                           .add("error", std::string(strerror(errno))));
+                        return false;
+                    }
+
+                    logger_->debug("Sent packet",
+                                   core::LogContext()
+                                       .add("bytes", static_cast<int>(sent))
+                                       .add("type", static_cast<int>(packet.get_message_type())));
+                    return true;
+                }
+                catch (const std::exception &e)
+                {
+                    logger_->error("Exception sending packet",
+                                   core::LogContext().add("error", e.what()));
+                    return false;
+                }
+            }
+
+            void CoCClientHandler::handle_received_data(const uint8_t *data, size_t length)
+            {
+                // Add to receive buffer
+                receive_buffer_.insert(receive_buffer_.end(), data, data + length);
+
+                // Try to parse packets from buffer
+                while (receive_buffer_.size() >= protocol::ProtocolPacket::PACKET_HEADER_SIZE)
+                {
+                    auto packet = protocol::ProtocolPacket::from_bytes(receive_buffer_.data(), receive_buffer_.size());
+
+                    if (packet)
+                    {
+                        size_t packet_size = protocol::ProtocolPacket::PACKET_HEADER_SIZE + packet->get_payload().size();
+
+                        // Remove consumed bytes
+                        receive_buffer_.erase(receive_buffer_.begin(),
+                                              receive_buffer_.begin() + packet_size);
+
+                        // Handle the packet
+                        handle_packet(*packet);
+                    }
+                    else
+                    {
+                        // Not enough data or invalid packet
+                        break;
+                    }
+                }
+
+                // Prevent buffer from growing too large
+                if (receive_buffer_.size() > 4096)
+                {
+                    logger_->warning("Receive buffer too large, clearing",
+                                     core::LogContext().add("size", receive_buffer_.size()));
+                    receive_buffer_.clear();
+                }
+            }
+
+            void CoCClientHandler::handle_packet(const protocol::ProtocolPacket &packet)
+            {
+                // Capture inbound packet for monitoring
+                if (packet_monitor_)
+                {
+                    packet_monitor_->capture_packet(packet, "inbound", core::TransportType::BLE);
+                }
+
+                if (packet.get_message_type() == MessageType::HELLO ||
+                    packet.get_message_type() == MessageType::AUTH)
+                {
+                    handle_handshake_packet(packet);
+                }
+                else if (authenticated_)
+                {
+                    handle_data_packet(packet);
+                }
+                else
+                {
+                    logger_->warning("Received packet before authentication - sending ERROR response",
+                                     core::LogContext()
+                                         .add("type", static_cast<int>(packet.get_message_type())));
+                    
+                    // Send ERROR packet to notify client to re-authenticate
+                    // Error code 0x0B = "Not authenticated" (client should reconnect)
+                    std::vector<uint8_t> error_payload = {0x0B, 0x00, 0x00}; // error_code, seq_high, seq_low
+                    protocol::ProtocolPacket error_packet(
+                        MessageType::ERROR,
+                        ROUTER_ADDRESS,
+                        packet.get_source_addr(),
+                        error_payload);
+                    send_packet(error_packet);
+                }
+            }
+
+            void CoCClientHandler::handle_handshake_packet(const protocol::ProtocolPacket &packet)
+            {
+                try
+                {
+                    // Process handshake based on message type
+                    if (packet.get_message_type() == MessageType::HELLO)
+                    {
+                        std::string device_id;
+                        std::vector<uint8_t> nonce1;
+                        
+                        if (handshake_manager_->process_hello_packet(packet, device_id, nonce1))
+                        {
+                            device_id_ = device_id;
+
+                            auto challenge = handshake_manager_->create_challenge_packet(device_id, nonce1);
+                            if (challenge)
+                            {
+                                send_packet(*challenge);
+                            }
+                            else
+                            {
+                                logger_->warning("Failed to create challenge packet",
+                                               core::LogContext().add("device_id", device_id));
+                            }
+                        }
+                    }
+                    else if (packet.get_message_type() == MessageType::AUTH)
+                    {
+                        if (handshake_manager_->verify_auth_packet(device_id_, packet))
+                        {
+                            // Handshake complete
+                            session_crypto_ = handshake_manager_->get_session_crypto(device_id_);
+
+                            logger_->info("Client authenticated successfully",
+                                          core::LogContext()
+                                              .add("device_id", device_id_));
+
+                            // Register device
+                            if (!device_management_.register_device(device_id_, core::TransportType::BLE))
+                            {
+                                logger_->error("Failed to register device after authentication",
+                                               core::LogContext().add("device_id", device_id_));
+                                return;
+                            }
+
+                            // Get assigned address from routing service
+                            uint16_t assigned_address = routing_service_.get_device_address(device_id_);
+
+                            if (assigned_address == 0)
+                            {
+                                logger_->error("Device registered but no address assigned",
+                                               core::LogContext().add("device_id", device_id_));
+                                device_management_.remove_device(device_id_);
+                                return;
+                            }
+                            
+                            // Authenticate device with session crypto
+                            device_management_.authenticate_device(device_id_, session_crypto_);
+
+                            // Send AUTH_ACK with correct assigned address
+                            auto ack = handshake_manager_->create_auth_ack_packet(device_id_, assigned_address);
+                            if (ack && send_packet(*ack))
+                            {
+                                authenticated_ = true;
+                                
+                                // Remove handshake state as it's no longer needed
+                                handshake_manager_->remove_handshake(device_id_);
+                                
+                                logger_->info("AUTH_ACK sent successfully",
+                                              core::LogContext()
+                                                  .add("device_id", device_id_)
+                                                  .add("assigned_address", assigned_address));
+                            }
+                            else
+                            {
+                                logger_->error("Failed to send AUTH_ACK",
+                                               core::LogContext().add("device_id", device_id_));
+                            }
+                        }
+                        else
+                        {
+                            logger_->warning("AUTH verification failed, clearing handshake state",
+                                           core::LogContext().add("device_id", device_id_));
+                            
+                            // Clear failed handshake to allow retry
+                            handshake_manager_->remove_handshake(device_id_);
+                            
+                            // Optionally send error response (client will timeout and retry)
+                            // For now, client timeout mechanism handles this
+                        }
+                    }
+                }
+                catch (const std::exception &e)
+                {
+                    logger_->error("Error processing handshake",
+                                   core::LogContext().add("error", e.what()));
+                }
+            }
+
+            void CoCClientHandler::handle_data_packet(const protocol::ProtocolPacket &packet)
+            {
+                try
+                {
+                    // Decrypt if encrypted
+                    protocol::ProtocolPacket decrypted_packet = packet;
+                    if (packet.is_encrypted())
+                    {
+                        if (!session_crypto_)
+                        {
+                            logger_->error("Received encrypted packet but no session crypto");
+                            return;
+                        }
+
+                        // Build AAD to match ESP32's encryption
+                        // AAD format: source_addr (2 bytes) || dest_addr (2 bytes) || sequence_number (2 bytes)
+                        std::vector<uint8_t> aad(6);
+                        uint16_t source = packet.get_source_addr();
+                        uint16_t dest = packet.get_dest_addr();
+                        uint16_t seq = packet.get_sequence_number();
+                        
+                        aad[0] = (source >> 8) & 0xFF;
+                        aad[1] = source & 0xFF;
+                        aad[2] = (dest >> 8) & 0xFF;
+                        aad[3] = dest & 0xFF;
+                        aad[4] = (seq >> 8) & 0xFF;
+                        aad[5] = seq & 0xFF;
+
+                        // Format AAD as hex string for logging
+                        char aad_hex[32];
+                        snprintf(aad_hex, sizeof(aad_hex), "%02X%02X%02X%02X%02X%02X",
+                                 aad[0], aad[1], aad[2], aad[3], aad[4], aad[5]);
+
+                        logger_->debug("Decrypting with AAD",
+                                       core::LogContext()
+                                           .add("source", source)
+                                           .add("dest", dest)
+                                           .add("seq", seq)
+                                           .add("aad_hex", std::string(aad_hex)));
+
+                        std::vector<uint8_t> decrypted_data = session_crypto_->decrypt_gcm(packet.get_payload(), aad);
+                        if (decrypted_data.empty())
+                        {
+                            logger_->error("Failed to decrypt packet");
+                            return;
+                        }
+                        decrypted_packet.set_payload(decrypted_data);
+                        // Mark packet as no longer encrypted after decryption
+                        decrypted_packet.set_encrypted(false);
+                    }
+
+                    // Update statistics
+                    statistics_service_.record_packet_received(decrypted_packet.get_payload().size());
+
+                    // Forward to device management service for processing (including ACK generation)
+                    device_management_.handle_packet(device_id_, decrypted_packet, core::TransportType::BLE, device_address_);
+
+                    logger_->debug("Processed data packet",
+                                   core::LogContext()
+                                       .add("device_id", device_id_)
+                                       .add("payload_size", decrypted_packet.get_payload().size()));
+                }
+                catch (const std::exception &e)
+                {
+                    logger_->error("Error processing data packet",
+                                   core::LogContext().add("error", e.what()));
+                }
+            }
+
+            // ========== BLETransport Implementation ==========
+
             BLETransport::BLETransport(
                 const core::RouterConfig &config,
                 services::RoutingService &routing_service,
@@ -21,654 +359,413 @@ namespace mita
                 services::StatisticsService &statistics_service,
                 std::shared_ptr<services::PacketMonitorService> packet_monitor)
                 : BaseTransport(config, routing_service, device_management, statistics_service),
-                  event_queue_(1000), // queue max size
-                  logger_(core::get_logger("BLETransport")),
-                  packet_monitor_(packet_monitor)
+                  packet_monitor_(packet_monitor),
+                  logger_(core::get_logger("BLETransport_L2CAP")),
+                  running_(false)
             {
-                logger_->info("BLE transport created",
-                             core::LogContext{}
-                                 .add("service_uuid", config_.ble.service_uuid)
-                                 .add("max_connections", config_.ble.max_connections));
+                logger_->info("BLE L2CAP CoC Transport created");
             }
 
             BLETransport::~BLETransport()
             {
                 stop();
-                logger_->info("BLE transport destroyed");
+                logger_->info("BLE L2CAP CoC Transport destroyed");
             }
-
 
             bool BLETransport::start()
             {
-                if (running_)
+                if (running_.load())
                 {
                     logger_->warning("BLE transport already running");
                     return true;
                 }
 
-                logger_->info("BLE transport starting...");
-                running_ = true;
+                logger_->info("Starting BLE L2CAP CoC transport...");
 
-                try
+                // Enable Bluetooth adapter
+                if (!enable_bluetooth_adapter())
                 {
-                    // start backend
-                    logger_->info("Initializing BLE backend...");
-                    if (!initialize_backend())
-                    {
-                        logger_->error("Failed to initialize BLE backend");
-                        stop();
-                        return false;
-                    }
-                    logger_->info("BLE backend initialized successfully");
-
-                    // start discovery
-                    logger_->info("Starting BLE discovery...");
-                    if (!start_discovery())
-                    {
-                        logger_->error("Failed to start BLE discovery");
-                        stop();
-                        return false;
-                    }
-                    logger_->info("BLE discovery started successfully");
-
-                    // create and start event processor
-                    logger_->info("Creating event processor...");
-                    event_processor_ = std::make_unique<BLEEventProcessor>(
-                        event_queue_,
-                        device_registry_,
-                        routing_service_,
-                        device_management_,
-                        statistics_service_);
-
-                    logger_->info("Starting event processor...");
-                    if (!event_processor_->start())
-                    {
-                        logger_->error("Failed to start event processor");
-                        stop();
-                        return false;
-                    }
-                    logger_->info("Event processor started successfully");
-
-                    // start scan thread
-                    logger_->info("Starting scan thread...");
-                    scan_thread_ = std::make_unique<std::thread>(&BLETransport::scan_loop, this);
-                    logger_->info("Scan thread started successfully");
-
-                    device_management_.register_message_handler("ble", [this](const std::string &device_id, const protocol::ProtocolPacket &packet)
-                                                            { send_packet(device_id, packet); });
-
-                    logger_->info("BLE transport started successfully",
-                                 core::LogContext{}
-                                     .add("service_uuid", config_.ble.service_uuid)
-                                     .add("max_connections", config_.ble.max_connections));
-                    return true;
-                }
-                catch (const std::exception &e)
-                {
-                    logger_->error("Exception during BLE transport start",
-                                  core::LogContext{}.add("error", e.what()));
-                    stop();
+                    logger_->error("Failed to enable Bluetooth adapter");
                     return false;
                 }
+
+                // Create L2CAP CoC server
+                l2cap_server_ = std::make_unique<BLEL2CAPServer>();
+
+                // Set callbacks
+                l2cap_server_->set_client_connected_callback(
+                    [this](int fd, const std::string &addr)
+                    { this->on_client_connected(fd, addr); });
+
+                l2cap_server_->set_client_disconnected_callback(
+                    [this](int fd, const std::string &addr)
+                    { this->on_client_disconnected(fd, addr); });
+
+                l2cap_server_->set_data_received_callback(
+                    [this](int fd, const std::string &addr, const uint8_t *data, size_t len)
+                    { this->on_data_received(fd, addr, data, len); });
+
+                // Start the server
+                if (!l2cap_server_->start())
+                {
+                    logger_->error("Failed to start L2CAP CoC server");
+                    disable_bluetooth_adapter();
+                    return false;
+                }
+
+                running_.store(true);
+
+                // Register message handler
+                device_management_.register_message_handler(
+                    "ble",
+                    [this](const std::string &device_id, const protocol::ProtocolPacket &packet)
+                    { send_packet(device_id, packet); });
+
+                // Start advertising watchdog thread
+                advertising_watchdog_thread_ = std::thread(&BLETransport::advertising_watchdog_loop, this);
+
+                logger_->info("BLE L2CAP CoC transport started successfully");
+                return true;
             }
 
             void BLETransport::stop()
             {
-                if (!running_)
+                if (!running_.load())
                 {
                     return;
                 }
 
-                logger_->info("Stopping BLE transport...");
-                running_ = false;
+                logger_->info("Stopping BLE L2CAP CoC transport...");
+                running_.store(false);
 
-                // wake up scan thread
-                logger_->debug("Waking up scan thread...");
-                scan_cv_.notify_all();
-
-                // stop discovery
-                logger_->debug("Stopping BLE discovery...");
-                stop_discovery();
-
-                // stop event processor (this will stop the event queue too)
-                logger_->debug("Stopping event processor...");
-                if (event_processor_)
+                // Stop advertising watchdog
+                if (advertising_watchdog_thread_.joinable())
                 {
-                    event_processor_->stop();
-                    event_processor_.reset();
+                    advertising_watchdog_thread_.join();
                 }
 
-                // wait for scan thread to finish
-                logger_->debug("Waiting for scan thread to finish...");
-                if (scan_thread_ && scan_thread_->joinable())
+                // Stop L2CAP server
+                if (l2cap_server_)
                 {
-    
-                    auto start_time = std::chrono::steady_clock::now();
-                    while (scan_thread_->joinable() &&
-                           std::chrono::steady_clock::now() - start_time < std::chrono::seconds(3))
-                    {
-                        scan_cv_.notify_all();
-                        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                    }
-
-                    if (scan_thread_->joinable())
-                    {
-                        logger_->debug("Joining scan thread...");
-                        scan_thread_->join();
-                    }
-                    scan_thread_.reset();
-                    logger_->debug("Scan thread stopped");
+                    l2cap_server_->stop();
+                    l2cap_server_.reset();
                 }
 
-                // disconnect all devices
-                logger_->debug("Disconnecting all devices...");
-                auto all_devices = device_registry_.get_all_devices();
-                for (auto &handler : all_devices)
+                // Clean up client handlers
                 {
-                    if (handler)
-                    {
-                        handler->disconnect();
-                    }
+                    std::lock_guard<std::mutex> lock(handlers_mutex_);
+                    client_handlers_.clear();
                 }
 
-                // clear registry
-                logger_->debug("Clearing device registry...");
-                device_registry_.clear();
-
-                // clear seen devices cache
                 {
-                    std::lock_guard<std::mutex> lock(seen_devices_mutex_);
-                    seen_devices_.clear();
+                    std::lock_guard<std::mutex> lock(device_map_mutex_);
+                    device_id_to_fd_.clear();
                 }
 
-                logger_->info("BLE transport stopped");
+                // Disable Bluetooth adapter
+                disable_bluetooth_adapter();
+
+                logger_->info("BLE L2CAP CoC transport stopped");
             }
 
-            bool BLETransport::send_packet(const std::string &device_id,
-                                          const protocol::ProtocolPacket &packet)
+            bool BLETransport::send_packet(const std::string &device_id, const protocol::ProtocolPacket &packet)
             {
-                logger_->debug("send_packet called",
-                              core::LogContext{}.add("device_id", device_id));
+                std::lock_guard<std::mutex> lock(device_map_mutex_);
 
-                // get device handler from registry by device_id
-                auto handler = device_registry_.find_by_device_id(device_id);
-                if (!handler)
+                auto it = device_id_to_fd_.find(device_id);
+                if (it == device_id_to_fd_.end())
                 {
-                    logger_->warning("No BLE connection found for device",
-                                    core::LogContext{}.add("device_id", device_id));
+                    logger_->warning("Device not found",
+                                     core::LogContext().add("device_id", device_id));
                     return false;
                 }
 
-                // send packet through handler
-                if (!handler->send_packet(packet))
+                int client_fd = it->second;
+
+                std::lock_guard<std::mutex> handler_lock(handlers_mutex_);
+                auto handler_it = client_handlers_.find(client_fd);
+                if (handler_it == client_handlers_.end())
                 {
-                    logger_->warning("Failed to send packet via BLE",
-                                    core::LogContext{}.add("device_id", device_id));
+                    logger_->error("Handler not found for device",
+                                   core::LogContext().add("device_id", device_id));
                     return false;
                 }
 
-                logger_->debug("Packet sent successfully via BLE",
-                              core::LogContext{}.add("device_id", device_id));
-                return true;
+                return handler_it->second->send_packet(packet);
             }
 
             int BLETransport::broadcast_packet(const protocol::ProtocolPacket &packet)
             {
-                logger_->debug("broadcast_packet called");
+                std::lock_guard<std::mutex> lock(handlers_mutex_);
+                int count = 0;
 
-                // get all authenticated devices from registry
-                auto authenticated_devices = device_registry_.get_authenticated_devices();
-
-                if (authenticated_devices.empty())
+                for (auto &pair : client_handlers_)
                 {
-                    logger_->debug("No authenticated BLE devices to broadcast to");
-                    return 0;
-                }
-
-                // send packet to each authenticated device
-                int sent_count = 0;
-                for (const auto &handler : authenticated_devices)
-                {
-                    if (handler && handler->send_packet(packet))
+                    if (pair.second->is_authenticated())
                     {
-                        sent_count++;
+                        if (pair.second->send_packet(packet))
+                        {
+                            count++;
+                        }
                     }
                 }
 
-                logger_->debug("Broadcast packet sent",
-                              core::LogContext{}
-                                  .add("total_devices", authenticated_devices.size())
-                                  .add("sent_count", sent_count));
-
-                return sent_count;
+                logger_->debug("Broadcast packet",
+                               core::LogContext().add("count", count));
+                return count;
             }
 
             std::string BLETransport::get_connection_info() const
             {
-
-                int device_count = device_registry_.get_device_count();
-
-                return "BLE Transport: " + std::to_string(device_count) + " devices connected" ;
+                std::lock_guard<std::mutex> lock(const_cast<std::mutex &>(handlers_mutex_));
+                return "BLE L2CAP CoC: " + std::to_string(client_handlers_.size()) + " client(s) connected";
             }
 
-
-
-            bool BLETransport::initialize_backend()
+            std::vector<std::pair<std::string, std::string>> BLETransport::get_all_device_handlers() const
             {
-                logger_->info("Initializing BLE backend...");
+                std::lock_guard<std::mutex> lock(const_cast<std::mutex &>(handlers_mutex_));
+                std::vector<std::pair<std::string, std::string>> result;
 
-                try{
-                    // Use peripheral backend instead of SimpleBluez
-                    logger_->info("Creating peripheral mode backend");
-                    backend_ = create_peripheral_backend(config_);
-
-                    if (!backend_)
+                for (const auto &pair : client_handlers_)
+                {
+                    if (pair.second->is_authenticated())
                     {
-                        logger_->error("Failed to create BLE peripheral backend");
-                        return false;
+                        result.emplace_back(pair.second->get_device_id(), pair.second->get_device_address());
                     }
+                }
 
-                    // Register GATT service and characteristic
-                    logger_->info("Registering GATT service",
-                                  core::LogContext{}
-                                      .add("service_uuid", config_.ble.service_uuid)
-                                      .add("char_uuid", config_.ble.characteristic_uuid));
+                return result;
+            }
 
-                    bool gatt_ok = backend_->register_gatt_service(
-                        config_.ble.service_uuid,
-                        config_.ble.characteristic_uuid,
-                        [this](const std::string &client_addr, const std::vector<uint8_t> &data)
-                        {
-                            // Handle incoming data from client
-                            this->on_data_received(client_addr, data);
-                        },
-                        [this](const std::string &client_addr) -> std::vector<uint8_t>
-                        {
-                            // Handle read requests (not commonly used)
-                            return {};
-                        });
+            void BLETransport::on_client_connected(int client_fd, const std::string &device_addr)
+            {
+                logger_->info("New client connected",
+                              core::LogContext()
+                                  .add("client_fd", client_fd)
+                                  .add("device_addr", device_addr));
 
-                    if (!gatt_ok)
-                    {
-                        logger_->warning("GATT service registration returned false (may need manual setup)");
-                    }
+                try
+                {
+                    auto handler = std::make_unique<CoCClientHandler>(
+                        client_fd,
+                        device_addr,
+                        config_,
+                        routing_service_,
+                        device_management_,
+                        statistics_service_,
+                        packet_monitor_);
+
+                    std::lock_guard<std::mutex> lock(handlers_mutex_);
+                    client_handlers_[client_fd] = std::move(handler);
                 }
                 catch (const std::exception &e)
                 {
-                    logger_->error("Failed to create BLE backend", core::LogContext{}.add("error", e.what()));
-                    return false;
+                    logger_->error("Error creating client handler",
+                                   core::LogContext().add("error", e.what()));
                 }
-
-                logger_->info("BLE peripheral backend initialized");
-                return true;
             }
 
-            bool BLETransport::start_discovery()
+            void BLETransport::on_client_disconnected(int client_fd, const std::string &device_addr)
             {
-                logger_->info("Starting BLE advertising (peripheral mode)...");
+                logger_->info("Client disconnected",
+                              core::LogContext()
+                                  .add("client_fd", client_fd)
+                                  .add("device_addr", device_addr));
 
-                // In peripheral mode, we advertise instead of scanning
-                bool adv_started = backend_->start_advertising(config_.ble.device_name);
-                if (!adv_started)
+                std::string device_id;
+
+                // Find and remove handler
                 {
-                    logger_->error("BLE backend failed to start advertising");
-                    return false;
-                }
-
-                logger_->info("BLE advertising started",
-                              core::LogContext{}.add("device_name", config_.ble.device_name));
-                return true;
-            }
-
-            void BLETransport::stop_discovery()
-            {
-                logger_->info("Stopping BLE advertising...");
-                backend_->stop_advertising();
-                logger_->info("BLE advertising stopped");
-            }
-
-            void BLETransport::scan_loop()
-            {
-                logger_->info("Peripheral mode monitoring thread started");
-
-                while (running_)
-                {
-                    try
+                    std::lock_guard<std::mutex> lock(handlers_mutex_);
+                    auto it = client_handlers_.find(client_fd);
+                    if (it != client_handlers_.end())
                     {
-                        // In peripheral mode, we don't scan for devices
-                        // Instead, we monitor connected clients and handle timeouts
-
-                        logger_->debug("Peripheral mode: monitoring clients");
-
-                        // Check heartbeat timeouts for connected clients
-                        check_heartbeat_timeouts();
-
-                        // Cleanup disconnected devices
-                        cleanup_disconnected_devices();
-
-                        // Sleep for the configured interval
-                        std::unique_lock<std::mutex> lock(scan_mutex_);
-                        scan_cv_.wait_for(lock, std::chrono::duration<double>(config_.ble.scan_pause),
-                                         [this] { return !running_; });
-                    }
-                    catch (const std::exception &e)
-                    {
-                        logger_->error("Error in peripheral monitoring loop",
-                                       core::LogContext{}.add("error", e.what()));
-
-                        std::unique_lock<std::mutex> lock(scan_mutex_);
-                        scan_cv_.wait_for(lock, std::chrono::seconds(5),
-                                          [this]
-                                          { return !running_; });
+                        device_id = it->second->get_device_id();
+                        client_handlers_.erase(it);
                     }
                 }
 
-                logger_->info("Peripheral monitoring thread stopped");
-            }
-
-            void BLETransport::handle_device_found(const std::string &address,
-                                                   const std::string &name)
-            {
-                if (!running_)
+                // Remove from device map
+                if (!device_id.empty())
                 {
-                    return;
+                    std::lock_guard<std::mutex> lock(device_map_mutex_);
+                    device_id_to_fd_.erase(device_id);
+
+                    // Device will be unregistered by device management service automatically
                 }
 
-                // comment debug log cause it too much I cant take it
-                // logger_->debug("Device found",
-                // core::LogContext{}.add("address", address).add("name", name));
+                // Ensure advertising stays on after disconnection
+                ensure_advertising();
+            }
 
-                // check if already connected
-                auto existing_handler = device_registry_.get_device(address);
-                if (existing_handler)
+            void BLETransport::on_data_received(int client_fd, const std::string &device_addr,
+                                                const uint8_t *data, size_t length)
+            {
+                // Get handler pointer and update mapping without holding lock during data processing
+                CoCClientHandler* handler = nullptr;
                 {
-                    // reconnect device handler still in retgistry
-                    if (!existing_handler->is_connected())
-                    {
-                        logger_->info("Device found in registry but disconnected - attempting reconnect",
-                                      core::LogContext{}
-                                          .add("address", address)
-                                          .add("device_id", existing_handler->get_device_id()));
+                    std::lock_guard<std::mutex> lock(handlers_mutex_);
+                    auto it = client_handlers_.find(client_fd);
 
-                        if (backend_->connect(address))
+                    if (it != client_handlers_.end())
+                    {
+                        handler = it->second.get();
+                        
+                        // Update device_id mapping BEFORE processing data so ACKs can be sent back
+                        if (handler->is_authenticated())
                         {
-                            // enable notifications
-                            if (backend_->enable_notifications(
-                                    address,
-                                    config_.ble.service_uuid,
-                                    config_.ble.characteristic_uuid,
-                                    [this](const std::string &addr, const std::vector<uint8_t> &data)
-                                    {
-                                        on_notification_received(addr, data);
-                                    }))
-                            {
-                                // reconnect handler
-                                if (existing_handler->reconnect())
-                                {
-                                    logger_->info("Device successfully reconnected",
-                                                  core::LogContext{}
-                                                      .add("address", address)
-                                                      .add("device_id", existing_handler->get_device_id()));
-                                }
-                                else
-                                {
-                                    logger_->warning("Handler reconnect failed",
-                                                     core::LogContext{}.add("address", address));
-                                }
-                            }
-                            else
-                            {
-                                logger_->warning("Failed to re-enable notifications on reconnect",
-                                                 core::LogContext{}.add("address", address));
-                                backend_->disconnect(address);
-                            }
-                        }
-                        else
-                        {
-                            logger_->warning("Backend reconnect failed",
-                                             core::LogContext{}.add("address", address));
+                            std::string device_id = handler->get_device_id();
+                            std::lock_guard<std::mutex> map_lock(device_map_mutex_);
+                            device_id_to_fd_[device_id] = client_fd;
                         }
                     }
-
-                    return;
                 }
 
-                // check if we've already seen and rejected this device recently
+                // Process data without holding handlers_mutex_ to avoid deadlock
+                if (handler)
                 {
-                    std::lock_guard<std::mutex> lock(seen_devices_mutex_);
-                    auto it = seen_devices_.find(address);
-                    if (it != seen_devices_.end())
-                    {
-                        return;
-                    }
-                }
-
-                // check max connections limit
-                if (device_registry_.get_device_count() >= config_.ble.max_connections)
-                {
-                    logger_->debug("Max connections reached - skipping device",
-                                   core::LogContext{}.add("address", address).add("max_connections", config_.ble.max_connections));
-                    return;
-                }
-
-                // check if device has required Mita service
-                if (!device_has_service(address))
-                {
-                    // Mark as seen so we don't check again
-                    std::lock_guard<std::mutex> lock(seen_devices_mutex_);
-                    seen_devices_.insert(address);
-
-                    // same here, too much logs
-                    // logger_->debug("Device does not have required service",
-                    // core::LogContext{}.add("address", address)
-                    //.add("service_uuid", config_.ble.service_uuid));
-                    return;
-                }
-
-                logger_->info("Connecting to new device",
-                              core::LogContext{}.add("address", address).add("name", name));
-
-                if (connect_to_device(address))
-                {
-                    logger_->info("Successfully connect to new device",
-                                  core::LogContext{}.add("address", address).add("name", name));
+                    handler->handle_received_data(data, length);
                 }
                 else
                 {
-                    // mark as seen to avoid immediate retry
-                    std::lock_guard<std::mutex> lock(seen_devices_mutex_);
-                    seen_devices_.insert(address);
-
-                    logger_->warning("Failed to connect to device",
-                                     core::LogContext{}.add("address", address).add("name", name));
+                    logger_->warning("Received data for unknown client",
+                                     core::LogContext().add("client_fd", client_fd));
                 }
             }
 
-            bool BLETransport::connect_to_device(const std::string &address)
+            bool run_cmd(const std::string &cmd, std::shared_ptr<core::Logger> logger, int ok_min = 0)
             {
-                if (!running_)
+                logger->debug("exec", core::LogContext().add("cmd", cmd));
+                int rc = system(cmd.c_str());
+                if (rc < ok_min)
                 {
+                    logger->warning("non-zero exit", core::LogContext().add("rc", rc).add("cmd", cmd));
+                }
+                return rc == 0;
+            }
+
+            bool BLETransport::enable_bluetooth_adapter()
+            {
+                logger_->info("Enabling and configuring Bluetooth adapter (LE CoC, no PIN)…");
+
+                // Make sure bluetoothd is up
+                run_cmd("sudo systemctl start bluetooth", logger_);
+
+                // Unblock radio, give the kernel a sec
+                run_cmd("rfkill unblock bluetooth", logger_);
+                std::this_thread::sleep_for(std::chrono::milliseconds(250));
+
+                // Clean slate: power off first
+                run_cmd("sudo btmgmt -i 0 power off", logger_);
+
+                // LE only; no BR/EDR = no legacy PIN dance
+                run_cmd("sudo btmgmt -i 0 bredr off", logger_);
+                run_cmd("sudo btmgmt -i 0 le on", logger_);
+
+                // Allow inbound links w/o bonding; keep pairable so Just Works can happen
+                // io-cap 3 = NoInputNoOutput (forces Just Works for SMP)
+                run_cmd("sudo btmgmt -i 0 connectable on", logger_);
+                run_cmd("sudo btmgmt -i 0 bondable off", logger_);
+                run_cmd("sudo btmgmt -i 0 io-cap 3", logger_); // NoInputNoOutput
+
+                // Name before power on
+                run_cmd("sudo btmgmt -i 0 name 'MITA-ROUTER'", logger_);
+
+                // Power on
+                if (!run_cmd("sudo btmgmt -i 0 power on", logger_))
+                {
+                    logger_->error("btmgmt power on failed");
                     return false;
                 }
 
-                logger_->info("Connecting to device",
-                              core::LogContext{}.add("address", address));
+                // Enable controller advertising feature
+                run_cmd("sudo btmgmt -i 0 advertising on", logger_);
 
-                if (!backend_->connect(address))
-                {
-                    logger_->warning("Backend failed to connect to device",
-                                     core::LogContext{}.add("address", address));
-                    return false;
-                }
+                // Create/refresh a persistent advertising instance.
+                // -d : connectable + discoverable
+                // -p 200: interval ~200ms
+                // name + flags 0x06 (LE General Disc. + BR/EDR not supported)
+                // If an instance already exists, BlueZ returns non-zero; we'll ignore and continue.
+                run_cmd("sudo btmgmt -i 0 add-adv -d -p 200 "
+                        "flags 0x06 name 'MITA-ROUTER'",
+                        logger_, /*ok_min*/ INT_MIN);
 
-                auto handler = std::make_shared<BLEDeviceHandler>(
-                    backend_.get(),
-                    address,
-                    config_,
-                    routing_service_,
-                    device_management_,
-                    statistics_service_,
-                    packet_monitor_);
+                // As a belt-and-suspenders, also set an agent that accepts Just Works w/out prompts.
+                // This is harmless on headless devices and ensures “no PIN”.
+                run_cmd(
+                    "bash -lc \"bluetoothctl --timeout 3 <<'EOF'\n"
+                    "agent NoInputNoOutput\n"
+                    "default-agent\n"
+                    "pairable on\n"
+                    "discoverable on\n"
+                    "system-alias MITA-ROUTER\n"
+                    "EOF\"",
+                    logger_);
 
-                if (!handler->connect())
-                {
-                    logger_->error("Device handler failed to connect",
-                                   core::LogContext{}.add("address", address));
-                    backend_->disconnect(address);
-                    return false;
-                }
-
-                // Step 4: Add handler to registry FIRST (before enabling notifications!)
-                // This prevents race condition where notification arrives before handler is registered
-                if (!device_registry_.add_device(address, handler))
-                {
-                    logger_->error("Failed to add device to registry",
-                                   core::LogContext{}.add("address", address));
-                    backend_->disconnect(address);
-                    return false;
-                }
-
-                // red alert!!! handler MUST be in registry before this, as notifications can arrive immediately
-                if (!backend_->enable_notifications(
-                        address,
-                        config_.ble.service_uuid,
-                        config_.ble.characteristic_uuid,
-                        [this](const std::string &addr, const std::vector<uint8_t> &data)
-                        {
-                            // this runs in SimpleBluez thread
-                            on_notification_received(addr, data);
-                        }))
-                {
-                    logger_->error("Failed to enable notifications",
-                                   core::LogContext{}.add("address", address));
-                    device_registry_.remove_device(address);
-                    backend_->disconnect(address);
-                    return false;
-                }
-
-                logger_->info("Successfully connected and registered device",
-                              core::LogContext{}.add("address", address).add("registry_size", device_registry_.get_device_count()));
-
+                logger_->info("Bluetooth adapter enabled for LE CoC. Advertising should now be active.");
                 return true;
             }
 
-            bool BLETransport::device_has_service(const std::string &address)
+            void BLETransport::disable_bluetooth_adapter()
             {
+                logger_->info("Disabling Bluetooth adapter (hard radio off)…");
 
-                if (!running_)
-                {
-                    return false;
-                }
+                // Stop advertising (controller side)
+                run_cmd("sudo btmgmt -i 0 advertising off", logger_);
+                // Best effort: remove all adv instances (ignore errors)
+                run_cmd("sudo btmgmt -i 0 rm-adv 0", logger_, INT_MIN);
+                run_cmd("sudo btmgmt -i 0 rm-adv 1", logger_, INT_MIN);
+                run_cmd("sudo btmgmt -i 0 rm-adv 2", logger_, INT_MIN);
 
-                if (backend_->has_service(address, config_.ble.service_uuid))
-                {
-                    logger_->debug("Device has required service",
-                                   core::LogContext{}.add("address", address).add("service_uuid", config_.ble.service_uuid));
-                    return true;
-                }
+                // Not pairable, not connectable
+                run_cmd("sudo btmgmt -i 0 connectable off", logger_);
+                run_cmd("sudo btmgmt -i 0 bondable off", logger_);
 
-                return false;
+                // Power down controller
+                run_cmd("sudo btmgmt -i 0 power off", logger_);
+
+                // Bring interface down & block RF (actual radio kill)
+                run_cmd("hciconfig hci0 down", logger_);
+                run_cmd("rfkill block bluetooth", logger_);
+
+                logger_->info("Bluetooth adapter fully disabled & radio blocked.");
             }
 
-            void BLETransport::on_notification_received(const std::string &address,
-                                                        const std::vector<uint8_t> &data)
+            void BLETransport::ensure_advertising()
             {
+                // Keep advertising alive. If controller dropped instances, recreate.
+                // Reduced logging to avoid spam - only runs periodically
 
-                logger_->debug("Notification received",
-                               core::LogContext{}.add("address", address).add("size", data.size()));
+                // If radio got blocked, silently un-block + power back on.
+                run_cmd("rfkill unblock bluetooth", logger_, INT_MIN);
+                run_cmd("sudo btmgmt -i 0 power on", logger_, INT_MIN);
 
-                if (!event_queue_.enqueue(BLEEvent::notification(address, data)))
-                {
-                    logger_->warning("Failed to enqueue notification - queue full",
-                                     core::LogContext{}.add("address", address));
-                }
+                run_cmd("sudo btmgmt -i 0 le on", logger_, INT_MIN);
+                run_cmd("sudo btmgmt -i 0 bredr off", logger_, INT_MIN);
+                run_cmd("sudo btmgmt -i 0 connectable on", logger_, INT_MIN);
+                run_cmd("sudo btmgmt -i 0 advertising on", logger_, INT_MIN);
+
+                // Re-add adv if needed; ignore non-zero (already exists)
+                run_cmd("sudo btmgmt -i 0 add-adv -d -p 200 flags 0x06 name 'MITA-ROUTER'", logger_, INT_MIN);
             }
 
-            void BLETransport::check_heartbeat_timeouts()
+            void BLETransport::advertising_watchdog_loop()
             {
-                auto all_devices = device_registry_.get_all_devices();
-                for (auto &handler : all_devices)
+                logger_->info("Advertising watchdog started");
+
+                while (running_.load())
                 {
-                    if (handler)
+                    // Re-enable advertising every 10 seconds to keep it alive
+                    ensure_advertising();
+
+                    // Sleep for 10 seconds
+                    for (int i = 0; i < 100 && running_.load(); ++i)
                     {
-                        handler->check_heartbeat_timeout();
-                    }
-                }
-            }
-
-            std::vector<std::shared_ptr<BLEDeviceHandler>> BLETransport::get_all_device_handlers() const
-            {
-                return device_registry_.get_all_devices();
-            }
-
-            void BLETransport::cleanup_disconnected_devices()
-            {
-                logger_->debug("Cleaning up disconnected devices");
-
-                auto all_devices = device_registry_.get_all_devices();
-                int removed_count = 0;
-
-                for (auto &handler : all_devices)
-                {
-                    if (handler && handler->check_for_disconnected())
-                    {
-                        std::string device_id = handler->get_device_id();
-                        std::string address = handler->get_device_address();
-
-                        logger_->info("Removing device after grace period",
-                                      core::LogContext{}
-                                          .add("device_id", device_id)
-                                          .add("address", address));
-
-                        // disconnect backend
-                        backend_->disconnect(address);
-
-                        // remove from device registry
-                        if (device_registry_.remove_device(address))
-                        {
-                            removed_count++;
-
-                            if (!device_id.empty())
-                            {
-                                device_management_.remove_device(device_id);
-                            }
-                        }
+                        std::this_thread::sleep_for(std::chrono::milliseconds(100));
                     }
                 }
 
-                if (removed_count > 0)
-                {
-                    logger_->info("Removed disconnected devices",
-                                  core::LogContext{}.add("count", removed_count));
-                }
-            }
-
-            void BLETransport::on_data_received(const std::string &client_address, const std::vector<uint8_t> &data)
-            {
-                logger_->debug("Data received from client",
-                               core::LogContext{}
-                                   .add("client_address", client_address)
-                                   .add("data_size", data.size()));
-
-                // Check if we already have a device handler for this client
-                auto handler = device_registry_.get_device(client_address);
-
-                if (!handler)
-                {
-                    // New client connection - create device handler
-                    logger_->info("New client connected via BLE",
-                                  core::LogContext{}.add("address", client_address));
-
-                    // Queue a notification event for processing
-                    // The event processor will handle creating the device handler
-                    BLEEvent event = BLEEvent::notification(client_address, data);
-                    event_queue_.enqueue(event);
-                }
-                else
-                {
-                    // Existing client - process data via notification event
-                    on_notification_received(client_address, data);
-                }
+                logger_->info("Advertising watchdog stopped");
             }
 
         } // namespace ble

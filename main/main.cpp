@@ -79,9 +79,32 @@ extern "C" void app_main(void)
     // Create protocol selector (ADAPTIVE learns best protocol over time)
     ProtocolSelector* selector = new ProtocolSelector(MITA_DEFAULT_DEVICE_ID, SelectionStrategy::ADAPTIVE);
     
+    // Create inline packet listener/logger
+    class PacketLogger : public IMessageHandler {
+    public:
+        bool canHandle(const std::string &message_type) const override {
+            return true;  // Listen to ALL packets
+        }
+
+        bool handleMessage(const DynamicJsonDocument &message, DynamicJsonDocument &response) override {
+            // Log the incoming packet
+            std::string json_str;
+            serializeJson(message, json_str);
+            ESP_LOGI("PACKET_RX", "Received packet: %s", json_str.c_str());
+
+            // You can do whatever you want with the data here!!
+            // Parse fields, trigger actions, etc.
+
+            return false;  // Don't consume the message, let other handlers process it
+        }
+    };
+
     // Create and register message handlers
+    PacketLogger* packetLogger = new PacketLogger();
     CommandHandler* cmdHandler = new CommandHandler(MITA_DEFAULT_DEVICE_ID);
     PingHandler* pingHandler = new PingHandler(MITA_DEFAULT_DEVICE_ID);
+
+    client->addMessageHandler(packetLogger);  // Add logger first to catch everything
     client->addMessageHandler(cmdHandler);
     client->addMessageHandler(pingHandler);
 
@@ -118,7 +141,8 @@ extern "C" void app_main(void)
             if (current_time - last_sensor_send >= SENSOR_INTERVAL) {
                 std::string sensor_data = generateSensorData(MITA_DEFAULT_DEVICE_ID);
                 ESP_LOGI(TAG, "Sending sensor data: %s", sensor_data.c_str());
-                client->sendData(sensor_data);
+                client->sendData(sensor_data, 0x0002);
+
                 last_sensor_send = current_time;
             }
         }

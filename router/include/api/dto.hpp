@@ -139,18 +139,7 @@ class DashboardStatsDto : public oatpp::DTO {
   DTO_FIELD(Boolean, bleEnabled);
   DTO_FIELD(String, wifiStatus);
   DTO_FIELD(String, bleStatus);
-  
-  // System resources
-  DTO_FIELD(Float32, cpuUsage);  // Percentage 0-100
-  DTO_FIELD(Int64, memoryUsed);  // Bytes
-  DTO_FIELD(Int64, memoryTotal); // Bytes
-  DTO_FIELD(Int64, storageUsed); // Bytes
-  DTO_FIELD(Int64, storageTotal); // Bytes
-  
-  // Network throughput
   DTO_FIELD(Int64, packetsPerSecond);
-  DTO_FIELD(Float64, uploadSpeed);   // MB/s
-  DTO_FIELD(Float64, downloadSpeed); // MB/s
 };
 
 class SystemResourcesDto : public oatpp::DTO {

@@ -54,14 +54,7 @@ export type DashboardStatsDto = {
     bleEnabled?: boolean;
     wifiStatus?: string;
     bleStatus?: string;
-    cpuUsage?: number;
-    memoryUsed?: number;
-    memoryTotal?: number;
-    storageUsed?: number;
-    storageTotal?: number;
     packetsPerSecond?: number;
-    uploadSpeed?: number;
-    downloadSpeed?: number;
 };
 
 export type RoutingDevicesDto = {

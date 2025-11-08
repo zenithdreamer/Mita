@@ -91,8 +91,8 @@ public:
     router->addController(apiController);
 
     // Create specialized controllers
-    auto statusController = StatusController::createShared(objectMapper);
-    router->addController(statusController);
+  auto statusController = StatusController::createShared(objectMapper, m_packetMonitor, m_deviceManager);
+  router->addController(statusController);
 
     auto packetsController = PacketsController::createShared(objectMapper, m_packetMonitor);
     router->addController(packetsController);

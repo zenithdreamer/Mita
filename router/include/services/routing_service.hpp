@@ -120,7 +120,6 @@ namespace mita
             // Address allocation tracking
             mutable std::mutex allocation_mutex_;
             std::set<uint16_t> allocated_addresses_;
-            uint16_t next_address_;
 
             std::atomic<bool> running_{false};
             

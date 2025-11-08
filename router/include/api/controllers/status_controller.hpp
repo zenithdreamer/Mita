@@ -38,17 +38,21 @@ private:
   }
 
 public:
-    StatusController(const std::shared_ptr<ObjectMapper>& objectMapper)
-        : oatpp::web::server::api::ApiController(objectMapper)
-        , m_startTime(std::chrono::steady_clock::now())
-        , m_packetMonitor(nullptr)
-        , m_deviceManager(nullptr) {}
+  StatusController(const std::shared_ptr<ObjectMapper>& objectMapper,
+          std::shared_ptr<mita::services::PacketMonitorService> packetMonitor = nullptr,
+          std::shared_ptr<mita::services::DeviceManagementService> deviceManager = nullptr)
+    : oatpp::web::server::api::ApiController(objectMapper)
+    , m_startTime(std::chrono::steady_clock::now())
+    , m_packetMonitor(packetMonitor)
+    , m_deviceManager(deviceManager) {}
 
-    static std::shared_ptr<StatusController> createShared(
-        const std::shared_ptr<ObjectMapper>& objectMapper
-    ) {
-        return std::make_shared<StatusController>(objectMapper);
-    }
+  static std::shared_ptr<StatusController> createShared(
+    const std::shared_ptr<ObjectMapper>& objectMapper,
+    std::shared_ptr<mita::services::PacketMonitorService> packetMonitor = nullptr,
+    std::shared_ptr<mita::services::DeviceManagementService> deviceManager = nullptr
+  ) {
+    return std::make_shared<StatusController>(objectMapper, packetMonitor, deviceManager);
+  }
 
   // GET /api/status (simple status)
   ENDPOINT_INFO(getStatus) {
@@ -95,8 +99,8 @@ public:
       dto->connectedDevices = static_cast<Int32>(m_deviceManager->get_device_count());
     } else {
       dto->connectedDevices = 0;
+      OATPP_LOGW("StatusController", "Device manager not initialized");
     }
-
     // Protocol status (WiFi and BLE are enabled if we have the transports)
     dto->wifiEnabled = true;
     dto->bleEnabled = true;

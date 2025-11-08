@@ -169,18 +169,3 @@ bool CryptoService::decryptGCM(const uint8_t *input, size_t input_len,
 
     return result;
 }
-
-uint8_t CryptoService::calculateSimpleChecksum(const uint8_t *data, size_t length)
-{
-    uint8_t checksum = 0;
-    for (size_t i = 0; i < length; i++)
-    {
-        checksum ^= data[i];
-    }
-    return checksum;
-}
-
-bool CryptoService::verifySimpleChecksum(const uint8_t *data, size_t length, uint8_t expected)
-{
-    return calculateSimpleChecksum(data, length) == expected;
-}

@@ -44,10 +44,6 @@ public:
     bool decryptGCM(const uint8_t *input, size_t input_len,
                     const uint8_t *aad, size_t aad_len,
                     uint8_t *plaintext, size_t &plaintext_len);
-
-    // Utility
-    uint8_t calculateSimpleChecksum(const uint8_t *data, size_t length);
-    bool verifySimpleChecksum(const uint8_t *data, size_t length, uint8_t expected);
 };
 
 #endif // CRYPTO_SERVICE_H

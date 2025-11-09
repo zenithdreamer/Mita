@@ -15,8 +15,8 @@
 #include <string>
 #include <functional>
 #include <cstdint>
-#include "shared/protocol/transport_interface.h"
-#include "shared/protocol/protocol_types.h"
+#include "protocol/transport_interface.h"
+#include "protocol/protocol_types.h"
 #include "transport/protocol_selector.h"
 
 // Forward declarations

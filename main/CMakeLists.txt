@@ -1,28 +1,26 @@
-# Gather all source files automatically
-file(GLOB_RECURSE MAIN_SOURCES 
-    "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/*.c"
-)
+# Main application entry point
+# SDK is now a separate component in components/mita_sdk/
 
-file(GLOB_RECURSE SHARED_SOURCES 
-    "${CMAKE_CURRENT_SOURCE_DIR}/../shared/**/*.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../shared/**/*.c"
-)
+# Select which demo to build based on CMake defines from platformio.ini
+if(DEMO_CONTROLLER)
+    set(MAIN_SOURCE "demo_controller.cpp")
+    message(STATUS "Building DEMO_CONTROLLER")
+elseif(DEMO_LED)
+    set(MAIN_SOURCE "demo_led.cpp")
+    message(STATUS "Building DEMO_LED")
+else()
+    set(MAIN_SOURCE "main.cpp")
+    message(STATUS "Building default main.cpp")
+endif()
 
 idf_component_register(
-    SRCS 
-        ${MAIN_SOURCES}
-        ${SHARED_SOURCES}
-    INCLUDE_DIRS 
+    SRCS
+        "${MAIN_SOURCE}"
+    INCLUDE_DIRS
         "."
         "../include"
-        "../shared"
-    REQUIRES 
-        nvs_flash 
-        esp_wifi 
-        esp_netif
-        lwip
-        bt
-        mbedtls
-        json
+    REQUIRES
+        nvs_flash
+        mita_sdk
+        driver
 )

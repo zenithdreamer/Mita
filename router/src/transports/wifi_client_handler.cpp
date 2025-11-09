@@ -76,12 +76,6 @@ namespace mita
                 return;
             }
 
-            // Capture inbound packet for monitoring
-            if (packet_monitor_)
-            {
-                packet_monitor_->capture_packet(packet, "inbound", core::TransportType::WIFI);
-            }
-
             // Update heartbeat for any received packet
             update_heartbeat();
 
@@ -135,12 +129,6 @@ namespace mita
 
             try
             {
-                // Capture outbound packet for monitoring
-                if (packet_monitor_)
-                {
-                    packet_monitor_->capture_packet(packet, "outbound", core::TransportType::WIFI);
-                }
-
                 auto packet_data = packet.to_bytes();
 
                 logger_->debug("About to call send_raw_packet_",

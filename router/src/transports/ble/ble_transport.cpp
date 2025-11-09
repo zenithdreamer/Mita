@@ -78,12 +78,6 @@ namespace mita
 
                 try
                 {
-                    // Capture outbound packet for monitoring
-                    if (packet_monitor_)
-                    {
-                        packet_monitor_->capture_packet(packet, "outbound", core::TransportType::BLE);
-                    }
-
                     std::vector<uint8_t> serialized = packet.to_bytes();
 
                     // Send via L2CAP CoC socket
@@ -149,12 +143,6 @@ namespace mita
 
             void CoCClientHandler::handle_packet(const protocol::ProtocolPacket &packet)
             {
-                // Capture inbound packet for monitoring
-                if (packet_monitor_)
-                {
-                    packet_monitor_->capture_packet(packet, "inbound", core::TransportType::BLE);
-                }
-
                 if (packet.get_message_type() == MessageType::HELLO ||
                     packet.get_message_type() == MessageType::AUTH)
                 {
@@ -289,63 +277,18 @@ namespace mita
             {
                 try
                 {
-                    // Decrypt if encrypted
-                    protocol::ProtocolPacket decrypted_packet = packet;
-                    if (packet.is_encrypted())
-                    {
-                        if (!session_crypto_)
-                        {
-                            logger_->error("Received encrypted packet but no session crypto");
-                            return;
-                        }
+                    // Update statistics (use encrypted size for inbound stats)
+                    statistics_service_.record_packet_received(packet.get_payload().size());
 
-                        // Build AAD to match ESP32's encryption
-                        // AAD format: source_addr (2 bytes) || dest_addr (2 bytes) || sequence_number (2 bytes)
-                        std::vector<uint8_t> aad(6);
-                        uint16_t source = packet.get_source_addr();
-                        uint16_t dest = packet.get_dest_addr();
-                        uint16_t seq = packet.get_sequence_number();
-                        
-                        aad[0] = (source >> 8) & 0xFF;
-                        aad[1] = source & 0xFF;
-                        aad[2] = (dest >> 8) & 0xFF;
-                        aad[3] = dest & 0xFF;
-                        aad[4] = (seq >> 8) & 0xFF;
-                        aad[5] = seq & 0xFF;
-
-                        // Format AAD as hex string for logging
-                        char aad_hex[32];
-                        snprintf(aad_hex, sizeof(aad_hex), "%02X%02X%02X%02X%02X%02X",
-                                 aad[0], aad[1], aad[2], aad[3], aad[4], aad[5]);
-
-                        logger_->debug("Decrypting with AAD",
-                                       core::LogContext()
-                                           .add("source", source)
-                                           .add("dest", dest)
-                                           .add("seq", seq)
-                                           .add("aad_hex", std::string(aad_hex)));
-
-                        std::vector<uint8_t> decrypted_data = session_crypto_->decrypt_gcm(packet.get_payload(), aad);
-                        if (decrypted_data.empty())
-                        {
-                            logger_->error("Failed to decrypt packet");
-                            return;
-                        }
-                        decrypted_packet.set_payload(decrypted_data);
-                        // Mark packet as no longer encrypted after decryption
-                        decrypted_packet.set_encrypted(false);
-                    }
-
-                    // Update statistics
-                    statistics_service_.record_packet_received(decrypted_packet.get_payload().size());
-
-                    // Forward to device management service for processing (including ACK generation)
-                    device_management_.handle_packet(device_id_, decrypted_packet, core::TransportType::BLE, device_address_);
+                    // Forward to device management service for processing (including decryption and ACK generation)
+                    // DeviceManagementService will handle decryption uniformly for both BLE and WiFi
+                    device_management_.handle_packet(device_id_, packet, core::TransportType::BLE, device_address_);
 
                     logger_->debug("Processed data packet",
                                    core::LogContext()
                                        .add("device_id", device_id_)
-                                       .add("payload_size", decrypted_packet.get_payload().size()));
+                                       .add("payload_size", packet.get_payload().size())
+                                       .add("encrypted", packet.is_encrypted()));
                 }
                 catch (const std::exception &e)
                 {

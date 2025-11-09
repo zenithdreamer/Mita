@@ -40,6 +40,9 @@ private:
     uint32_t packets_sent;                // Count packets since last rekey
     static const uint32_t REKEY_PACKET_THRESHOLD = 1000;  // Rekey after 1000 packets
 
+    // Sequence tracking
+    uint16_t sequence_counter;            // Sequence number for outgoing packets
+
     // Timing
     unsigned long last_heartbeat;
     unsigned long last_ping_sent;      // For measuring RTT

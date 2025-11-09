@@ -908,6 +908,8 @@ namespace mita
                 }
 
                 const auto *route = routing_service_.get_route(dest_addr);
+                bool forward_success = false;
+
                 if (route)
                 {
                     if (send_message_to_device(route->device_id, payload))
@@ -917,14 +919,19 @@ namespace mita
                                            .add("from_device", device_id)
                                            .add("to_device", route->device_id)
                                            .add("ttl", forward_packet.get_ttl()));
+                        forward_success = true;
                     }
                     else
                     {
-                        logger_->warning("Failed to forward packet",
+                        logger_->warning("Failed to forward packet - destination unreachable",
                                          core::LogContext()
                                              .add("from_device", device_id)
                                              .add("to_device", route->device_id));
                         statistics_service_.record_protocol_error();
+
+                        // Send ERROR: destination exists in routing table but unreachable
+                        send_error_packet(device_id, 0x04, packet.get_sequence_number(), transport_type); // INVALID_DESTINATION
+                        return;
                     }
                 }
                 else
@@ -934,6 +941,26 @@ namespace mita
                                          .add("dest_addr", dest_addr)
                                          .add("source_device", device_id));
                     statistics_service_.record_protocol_error();
+
+                    // Send ERROR: destination address unknown
+                    send_error_packet(device_id, 0x04, packet.get_sequence_number(), transport_type); // INVALID_DESTINATION
+                    return;
+                }
+
+                // Hub-and-spoke hop-by-hop ACK: Router ACKs after successful forward
+                // This provides transport-layer reliability - application can add its own ACKs if needed
+                uint8_t priority_flags = packet.get_priority_flags();
+                bool requires_ack = (priority_flags & 0x20) != 0; // FLAG_QOS_RELIABLE
+                bool no_ack = (priority_flags & 0x10) != 0;       // FLAG_QOS_NO_ACK
+
+                if (forward_success && (requires_ack || (!no_ack && !requires_ack)))
+                {
+                    logger_->info("Sending hop-by-hop ACK after successful forward",
+                                  core::LogContext()
+                                      .add("device_id", device_id)
+                                      .add("sequence", packet.get_sequence_number())
+                                      .add("dest_addr", dest_addr));
+                    send_ack_packet(device_id, packet.get_sequence_number(), transport_type);
                 }
 
                 return;

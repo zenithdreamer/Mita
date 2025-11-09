@@ -16,6 +16,7 @@ MitaClient::MitaClient(const NetworkConfig &config)
     : transport(nullptr), network_config(config),
       assigned_address(UNASSIGNED_ADDRESS), handshake_completed(false),
       packets_sent(0),  // Initialize packet counter for session rekey
+      sequence_counter(0),  // Initialize sequence counter
       last_heartbeat(0), last_ping_sent(0),
       last_reconnect_attempt(0),
       auto_reconnect_enabled(true),   // Auto-reconnect enabled by default
@@ -255,6 +256,7 @@ void MitaClient::disconnect(DisconnectReason reason)
     handshake_completed = false;
     assigned_address = UNASSIGNED_ADDRESS;
     crypto_service.clearSessionKey();
+    sequence_counter = 0;
 
     ESP_LOGI(TAG, "%s", "MitaClient: Disconnected");
 }
@@ -784,6 +786,7 @@ void MitaClient::handleIncomingMessages()
                     ESP_LOGI(TAG, "%s", "MitaClient: Router requires re-authentication - triggering reconnect");
                     crypto_service.clearSessionKey();
                     handshake_completed = false;
+                    sequence_counter = 0;
                     if (transport) {
                         transport->disconnect();
                     }
@@ -793,6 +796,7 @@ void MitaClient::handleIncomingMessages()
                     ESP_LOGI(TAG, "%s", "MitaClient: INVALID_SEQUENCE - forcing session resync");
                     crypto_service.clearSessionKey();
                     handshake_completed = false;
+                    sequence_counter = 0;
                     if (transport) {
                         transport->disconnect();
                     }
@@ -802,6 +806,7 @@ void MitaClient::handleIncomingMessages()
                     ESP_LOGI(TAG, "%s", "MitaClient: SESSION_EXPIRED - reconnecting with full handshake");
                     crypto_service.clearSessionKey();
                     handshake_completed = false;
+                    sequence_counter = 0;
                     if (transport) {
                         transport->disconnect();
                     }
@@ -1029,13 +1034,24 @@ bool MitaClient::waitForAck(uint16_t expected_sequence)
                         // Mark as disconnected to force re-authentication
                         handshake_completed = false;
                         crypto_service.clearSessionKey();
+                        sequence_counter = 0;
                         return false;
+                    }
+                    else if (error_code == 0x04) // INVALID_DESTINATION
+                    {
+                        ESP_LOGE(TAG, "MitaClient: Destination address does not exist or is unreachable (seq=%d)", failed_seq);
+                        // Don't retry - destination doesn't exist
+                        if (failed_seq == expected_sequence)
+                        {
+                            return false;
+                        }
                     }
                     else if (error_code == 0x07) // SESSION_EXPIRED
                     {
                         ESP_LOGI(TAG, "%s", "MitaClient: Router reports session expired - need to re-authenticate");
                         handshake_completed = false;
                         crypto_service.clearSessionKey();
+                        sequence_counter = 0;
                         return false;
                     }
                     else if (error_code == 0x0B) // NOT_AUTHENTICATED
@@ -1043,6 +1059,7 @@ bool MitaClient::waitForAck(uint16_t expected_sequence)
                         ESP_LOGI(TAG, "%s", "MitaClient: Router reports not authenticated - triggering reconnect");
                         handshake_completed = false;
                         crypto_service.clearSessionKey();
+                        sequence_counter = 0;
                         // Disconnect transport to trigger reconnection
                         if (transport) {
                             transport->disconnect();
@@ -1118,7 +1135,7 @@ bool MitaClient::sendEncryptedMessageWithQoS(uint16_t dest_addr, const std::stri
         }
     }
 
-    static uint16_t sequence_counter = 0;
+    // Increment sequence counter (member variable, not static)
     sequence_counter++;
 
     BasicProtocolPacket packet;

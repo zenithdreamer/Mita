@@ -369,13 +369,13 @@ namespace mita
 
         void WiFiClientHandler::handle_heartbeat_packet(const protocol::ProtocolPacket &packet)
         {
-            // Update last seen time
+            // Update local heartbeat time for timeout detection
             update_heartbeat();
 
-            // Capture heartbeat for packet monitoring (if available)
-            if (packet_monitor_)
+            // Forward to device management service to update device activity in routing table
+            if (!device_id_.empty())
             {
-                packet_monitor_->capture_packet(packet, "inbound", core::TransportType::WIFI);
+                device_management_.handle_packet(device_id_, packet, core::TransportType::WIFI, client_ip_);
             }
 
             logger_->debug("Heartbeat received",

@@ -73,7 +73,6 @@ extern "C" void app_main(void)
     MitaClient* client = new MitaClient(config);
     if (!client || !client->initialize()) {
         ESP_LOGE(TAG, "Failed to initialize MitaClient");
-        return;
     }
 
     // Create protocol selector (ADAPTIVE learns best protocol over time)
@@ -118,15 +117,16 @@ extern "C" void app_main(void)
     ESP_LOGI(TAG, "Connecting to network...");
     selector->printStats();
     
+
     if (!client->connectToNetworkSmart(selector, MITA_DEFAULT_SHARED_SECRET)) {
         ESP_LOGE(TAG, "Failed to connect to network");
-        return;
+        // Do not return; allow main loop to run for auto-reconnect
+    } else {
+        ESP_LOGI(TAG, "Successfully connected!");
+        ESP_LOGI(TAG, "  Address: 0x%04X", client->getAssignedAddress());
+        ESP_LOGI(TAG, "  Transport: %s", client->getTransportType() == TRANSPORT_WIFI ? "WiFi" : "BLE");
+        ESP_LOGI(TAG, "================================================");
     }
-
-    ESP_LOGI(TAG, "Successfully connected!");
-    ESP_LOGI(TAG, "  Address: 0x%04X", client->getAssignedAddress());
-    ESP_LOGI(TAG, "  Transport: %s", client->getTransportType() == TRANSPORT_WIFI ? "WiFi" : "BLE");
-    ESP_LOGI(TAG, "================================================");
 
     // Main loop - send sensor data every 10 seconds
     unsigned long last_sensor_send = 0;

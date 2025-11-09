@@ -782,18 +782,35 @@ void MitaClient::handleIncomingMessages()
                 if (error_code == 0x0B) // NOT_AUTHENTICATED
                 {
                     ESP_LOGI(TAG, "%s", "MitaClient: Router requires re-authentication - triggering reconnect");
-                    // Clear session state to force full handshake on next connection attempt
                     crypto_service.clearSessionKey();
                     handshake_completed = false;
-                    // Disconnect transport to trigger reconnection
                     if (transport) {
                         transport->disconnect();
                     }
                 }
-                // TODO: React to other errors
-                // - INVALID_SEQUENCE: Reset sequence counter
-                // - SESSION_EXPIRED: Reconnect with full handshake
-                // - RATE_LIMIT_EXCEEDED: Slow down transmission
+                else if (error_code == 0x01) // INVALID_SEQUENCE
+                {
+                    ESP_LOGI(TAG, "%s", "MitaClient: INVALID_SEQUENCE - forcing session resync");
+                    crypto_service.clearSessionKey();
+                    handshake_completed = false;
+                    if (transport) {
+                        transport->disconnect();
+                    }
+                }
+                else if (error_code == 0x07) // SESSION_EXPIRED
+                {
+                    ESP_LOGI(TAG, "%s", "MitaClient: SESSION_EXPIRED - reconnecting with full handshake");
+                    crypto_service.clearSessionKey();
+                    handshake_completed = false;
+                    if (transport) {
+                        transport->disconnect();
+                    }
+                }
+                else if (error_code == 0x06) // RATE_LIMIT_EXCEEDED
+                {
+                    ESP_LOGW(TAG, "%s", "MitaClient: RATE_LIMIT_EXCEEDED - slowing down transmission");
+                    vTaskDelay(pdMS_TO_TICKS(2000)); // Wait 2 seconds before next send attempt
+                }
             }
             return;
         }

@@ -134,8 +134,9 @@ namespace mita
                 return false;
             }
 
+
             device->session_crypto = session_crypto;
-            device->state = DeviceState::AUTHENTICATED;
+            device->state = DeviceState::ACTIVE; // Immediately transition to ACTIVE after authentication
             device->last_activity = std::chrono::steady_clock::now();
 
             // Set session expiration (1 hour from now)
@@ -725,6 +726,38 @@ namespace mita
                 return;
             }
 
+            // Check for retransmission BEFORE timestamp/sequence validation
+            // If this is a retransmission of the most recent packet, just resend ACK and skip processing
+            if (device->sequence_initialized &&
+                packet.get_sequence_number() == device->last_valid_sequence)
+            {
+                auto now = std::chrono::steady_clock::now();
+                auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    now - device->last_sequence_time);
+                const std::chrono::milliseconds RETRANSMISSION_WINDOW{5000};
+
+                if (elapsed < RETRANSMISSION_WINDOW)
+                {
+                    logger_->debug("Detected retransmission - resending ACK without reprocessing",
+                                   core::LogContext()
+                                       .add("device_id", device_id)
+                                       .add("sequence", packet.get_sequence_number())
+                                       .add("elapsed_ms", elapsed.count()));
+
+                    // Just resend ACK, don't reprocess the packet
+                    uint8_t priority_flags = packet.get_priority_flags();
+                    bool requires_ack = (priority_flags & 0x20) != 0;  // FLAG_QOS_RELIABLE
+                    bool no_ack = (priority_flags & 0x10) != 0;        // FLAG_QOS_NO_ACK
+
+                    if (requires_ack || (!no_ack && !requires_ack))
+                    {
+                        send_ack_packet(device_id, packet.get_sequence_number(), transport_type);
+                    }
+
+                    return; // Skip processing this retransmission
+                }
+            }
+
             // Validate timestamp freshness (max 60 seconds old)
             // Protects against replay attacks with old but valid sequence numbers
             if (!validate_packet_timestamp(packet.get_timestamp()))
@@ -736,7 +769,7 @@ namespace mita
                 statistics_service_.record_stale_packet();
                 statistics_service_.record_protocol_error();
 
-                // Flag packet as dropped in monitor
+                // Flag packet as dropped in monitor (async, non-blocking)
                 if (packet_monitor_ && !packet_id.empty())
                 {
                     packet_monitor_->update_packet_error(
@@ -762,7 +795,7 @@ namespace mita
                                      .add("sequence", packet.get_sequence_number()));
                 statistics_service_.record_protocol_error();
 
-                // Flag packet as dropped in monitor
+                // Flag packet as dropped in monitor (async, non-blocking)
                 if (packet_monitor_ && !packet_id.empty())
                 {
                     packet_monitor_->update_packet_error(
@@ -826,7 +859,7 @@ namespace mita
                                        .add("device_id", device_id)
                                        .add("decrypted_size", payload.size()));
 
-                    // Store decrypted payload in packet monitor
+                    // Store decrypted payload in packet monitor (async, non-blocking)
                     if (packet_monitor_ && !packet_id.empty())
                     {
                         // Convert decrypted payload to string for storage
@@ -840,7 +873,7 @@ namespace mita
                                    core::LogContext().add("device_id", device_id).add("error", e.what()));
                     statistics_service_.record_protocol_error();
 
-                    // Flag the existing packet with GCM authentication failure
+                    // Flag the existing packet with GCM authentication failure (async, non-blocking)
                     if (packet_monitor_ && !packet_id.empty())
                     {
                         packet_monitor_->update_packet_error(
@@ -1426,6 +1459,12 @@ namespace mita
                     device->assigned_address, // destination is the device
                     payload);
 
+                // Capture outbound ACK for monitoring
+                if (packet_monitor_)
+                {
+                    packet_monitor_->capture_packet(ack_packet, "outbound", transport_type);
+                }
+
                 // Validate route
                 if (!routing_service_.forward_to_device(device->assigned_address, ack_packet))
                 {
@@ -1565,12 +1604,13 @@ namespace mita
             }
 
             // Check for exact duplicate (replay attack detection)
-            // This prevents retransmission of captured packets
+            // NOTE: Legitimate retransmissions are handled earlier in process_data_packet
+            // This check should only trigger for true replay attacks
             if (std::find(device->recent_sequences.begin(),
                           device->recent_sequences.end(),
                           seq) != device->recent_sequences.end())
             {
-                logger_->warning("SECURITY: Duplicate sequence detected - possible replay attack",
+                logger_->warning("SECURITY: Duplicate sequence detected - replay attack",
                                  core::LogContext()
                                      .add("device_id", device->device_id)
                                      .add("sequence", seq)

@@ -7,6 +7,9 @@
 #include <mutex>
 #include <deque>
 #include <chrono>
+#include <thread>
+#include <condition_variable>
+#include <atomic>
 #include "protocol/protocol.hpp"
 #include "protocol/protocol_types.h"
 #include "core/transport_interface.hpp"
@@ -55,6 +58,10 @@ namespace mita
         public:
             PacketMonitorService(std::shared_ptr<mita::db::Storage> storage = nullptr);
             ~PacketMonitorService();
+
+            // Start/stop the async writer thread
+            void start();
+            void stop();
 
             // Capture packets (returns packet_id for later updates)
             std::string capture_packet(const protocol::ProtocolPacket &packet,
@@ -111,6 +118,13 @@ namespace mita
             std::string bytes_to_hex(const std::vector<uint8_t> &data) const;
             std::vector<uint8_t> hex_to_bytes(const std::string &hex) const;
 
+            // Synchronous update methods (called by async writer thread)
+            bool update_packet_error_sync(const std::string &packet_id,
+                                         const std::string &error_flags,
+                                         bool is_valid = false);
+            bool update_packet_decrypted_sync(const std::string &packet_id,
+                                             const std::string &decrypted_payload);
+
             std::shared_ptr<core::Logger> logger_;
             std::shared_ptr<mita::db::Storage> storage_;
             mutable std::mutex db_mutex_;
@@ -132,9 +146,30 @@ namespace mita
             };
             mutable std::mutex window_mutex_;
             std::deque<PacketTimestamp> packet_window_;
-            
+
             void update_metrics(size_t bytes, bool is_upload);
             void clean_packet_window();
+
+            // Async database writer
+            std::thread writer_thread_;
+            std::atomic<bool> writer_running_{false};
+            std::mutex queue_mutex_;
+            std::condition_variable queue_cv_;
+            std::deque<CapturedPacket> write_queue_;
+            static constexpr size_t MAX_QUEUE_SIZE = 1000; // Prevent memory exhaustion
+
+            // Update operations queue
+            struct PacketUpdate {
+                enum Type { DECRYPTED_PAYLOAD, ERROR_FLAG } type;
+                std::string packet_id;
+                std::string data;
+                bool is_valid = false;
+            };
+            std::deque<PacketUpdate> update_queue_;
+
+            void writer_thread_func();
+            void enqueue_packet(const CapturedPacket &packet);
+            void enqueue_update(const PacketUpdate &update);
         };
 
     } // namespace services

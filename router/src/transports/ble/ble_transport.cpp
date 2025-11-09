@@ -174,12 +174,18 @@ namespace mita
             {
                 try
                 {
+                    // Capture inbound handshake packets (HELLO, AUTH) for BLE
+                    if (packet_monitor_ &&
+                        (packet.get_message_type() == MessageType::HELLO || packet.get_message_type() == MessageType::AUTH))
+                    {
+                        packet_monitor_->capture_packet(packet, "inbound", core::TransportType::BLE);
+                    }
                     // Process handshake based on message type
                     if (packet.get_message_type() == MessageType::HELLO)
                     {
                         std::string device_id;
                         std::vector<uint8_t> nonce1;
-                        
+                    
                         if (handshake_manager_->process_hello_packet(packet, device_id, nonce1))
                         {
                             device_id_ = device_id;
@@ -187,6 +193,12 @@ namespace mita
                             auto challenge = handshake_manager_->create_challenge_packet(device_id, nonce1);
                             if (challenge)
                             {
+                                // Capture outbound CHALLENGE for packet monitoring (BLE)
+                                if (packet_monitor_)
+                                {
+                                    packet_monitor_->capture_packet(*challenge, "outbound", core::TransportType::BLE);
+                                }
+
                                 send_packet(*challenge);
                             }
                             else
@@ -225,22 +237,28 @@ namespace mita
                                 device_management_.remove_device(device_id_);
                                 return;
                             }
-                            
+                        
                             // Set transport fingerprint before authentication (BLE MAC address)
                             device_management_.set_transport_fingerprint(device_id_, device_address_);
-                            
+                        
                             // Authenticate device with session crypto
                             device_management_.authenticate_device(device_id_, session_crypto_);
 
                             // Send AUTH_ACK with correct assigned address
                             auto ack = handshake_manager_->create_auth_ack_packet(device_id_, assigned_address);
+                            // Capture outbound AUTH_ACK for packet monitoring (BLE)
+                            if (ack && packet_monitor_)
+                            {
+                                packet_monitor_->capture_packet(*ack, "outbound", core::TransportType::BLE);
+                            }
+
                             if (ack && send_packet(*ack))
                             {
                                 authenticated_ = true;
-                                
+                            
                                 // Remove handshake state as it's no longer needed
                                 handshake_manager_->remove_handshake(device_id_);
-                                
+                            
                                 logger_->info("Device authenticated and AUTH_ACK sent",
                                               core::LogContext()
                                                   .add("device_id", device_id_)
@@ -253,23 +271,23 @@ namespace mita
                                                core::LogContext().add("device_id", device_id_));
                             }
                         }
-                        else
-                        {
-                            logger_->warning("AUTH verification failed, clearing handshake state",
-                                           core::LogContext().add("device_id", device_id_));
-                            
-                            // Clear failed handshake to allow retry
-                            handshake_manager_->remove_handshake(device_id_);
-                            
-                            // Optionally send error response (client will timeout and retry)
-                            // For now, client timeout mechanism handles this
-                        }
+                    } else {
+                        logger_->warning("AUTH verification failed, clearing handshake state",
+                                       core::LogContext().add("device_id", device_id_));
+                        // Clear failed handshake to allow retry
+                        handshake_manager_->remove_handshake(device_id_);
+                        // Optionally send error response (client will timeout and retry)
+                        // For now, client timeout mechanism handles this
                     }
                 }
+            
                 catch (const std::exception &e)
                 {
-                    logger_->error("Error processing handshake",
-                                   core::LogContext().add("error", e.what()));
+                    if (logger_)
+                    {
+                        logger_->error("Exception in handle_handshake_packet",
+                                    core::LogContext().add("error", e.what()));
+                    }
                 }
             }
 
@@ -680,20 +698,38 @@ namespace mita
 
             void BLETransport::ensure_advertising()
             {
-                // Keep advertising alive. If controller dropped instances, recreate.
-                // Reduced logging to avoid spam - only runs periodically
+                // Keep advertising alive to allow new devices to connect
+                // BlueZ stops advertising automatically when first connection is made
+                // We need to restart it to allow additional connections
 
-                // If radio got blocked, silently un-block + power back on.
-                run_cmd("rfkill unblock bluetooth", logger_, INT_MIN);
-                run_cmd("sudo btmgmt -i 0 power on", logger_, INT_MIN);
+                // Check current connection count for logging
+                size_t connection_count = 0;
+                {
+                    std::lock_guard<std::mutex> lock(const_cast<std::mutex&>(handlers_mutex_));
+                    connection_count = client_handlers_.size();
+                }
 
-                run_cmd("sudo btmgmt -i 0 le on", logger_, INT_MIN);
-                run_cmd("sudo btmgmt -i 0 bredr off", logger_, INT_MIN);
-                run_cmd("sudo btmgmt -i 0 connectable on", logger_, INT_MIN);
-                run_cmd("sudo btmgmt -i 0 advertising on", logger_, INT_MIN);
+                // Only run minimal commands to avoid disrupting active connections
+                // Do NOT run: power on/off, le on/off, bredr, connectable, rm-adv
+                // These commands can reset the controller and disconnect active devices
 
-                // Re-add adv if needed; ignore non-zero (already exists)
-                run_cmd("sudo btmgmt -i 0 add-adv -d -p 200 flags 0x06 name '" + config_.ble.device_name + "'", logger_, INT_MIN);
+                // Just try to add advertising instance - will fail silently if already exists
+                // This is safe to run even with active connections
+                int result = run_cmd("sudo btmgmt -i 0 add-adv -d -p 200 flags 0x06 name '" + config_.ble.device_name + "'",
+                        logger_, INT_MIN);
+
+                // Log for debugging (only on first call or when result changes)
+                static int last_result = -999;
+                static size_t last_count = 999;
+                if (result != last_result || connection_count != last_count)
+                {
+                    logger_->debug("Advertising refresh",
+                                   core::LogContext()
+                                       .add("connections", connection_count)
+                                       .add("add_adv_result", result));
+                    last_result = result;
+                    last_count = connection_count;
+                }
             }
 
             void BLETransport::advertising_watchdog_loop()

@@ -71,6 +71,27 @@ namespace mita
 
         void WiFiClientHandler::handle_packet(const protocol::ProtocolPacket &packet)
         {
+            // Special case: HELLO packets should always be processed to allow reconnection
+            if (packet.get_message_type() == MessageType::HELLO)
+            {
+                // HELLO packet received - client is attempting to reconnect
+                logger_->info("Received HELLO - allowing reconnection",
+                              core::LogContext()
+                                  .add("client_ip", client_ip_)
+                                  .add("was_running", running_));
+
+                // Re-enable handler for reconnection attempt
+                if (!running_)
+                {
+                    running_ = true;
+                    disconnect_time_ = std::chrono::steady_clock::time_point::max();
+                }
+
+                update_heartbeat();
+                handle_handshake_packet(packet);
+                return;
+            }
+
             if (!running_)
             {
                 return;
@@ -82,7 +103,6 @@ namespace mita
             // Handle based on message type
             switch (packet.get_message_type())
             {
-            case MessageType::HELLO:
             case MessageType::CHALLENGE:
             case MessageType::AUTH:
             case MessageType::AUTH_ACK:
@@ -198,6 +218,12 @@ namespace mita
                                 return;
                             }
                             
+                            // Capture outbound CHALLENGE for packet monitoring (WiFi)
+                            if (packet_monitor_)
+                            {
+                                packet_monitor_->capture_packet(*challenge_packet, "outbound", core::TransportType::WIFI);
+                            }
+
                             if (send_packet(*challenge_packet))
                             {
                                 logger_->info("Sent CHALLENGE to device",
@@ -260,6 +286,12 @@ namespace mita
 
                         // Create AUTH_ACK packet with assigned address
                         auto auth_ack_packet = handshake_manager_->create_auth_ack_packet(device_id_, assigned_address_);
+
+                        // Capture outbound AUTH_ACK for packet monitoring (WiFi)
+                        if (auth_ack_packet && packet_monitor_)
+                        {
+                            packet_monitor_->capture_packet(*auth_ack_packet, "outbound", core::TransportType::WIFI);
+                        }
 
                         if (auth_ack_packet && send_packet(*auth_ack_packet))
                         {
@@ -337,7 +369,14 @@ namespace mita
 
         void WiFiClientHandler::handle_heartbeat_packet(const protocol::ProtocolPacket &packet)
         {
+            // Update last seen time
             update_heartbeat();
+
+            // Capture heartbeat for packet monitoring (if available)
+            if (packet_monitor_)
+            {
+                packet_monitor_->capture_packet(packet, "inbound", core::TransportType::WIFI);
+            }
 
             logger_->debug("Heartbeat received",
                            core::LogContext().add("device_id", device_id_).add("client_ip", client_ip_));

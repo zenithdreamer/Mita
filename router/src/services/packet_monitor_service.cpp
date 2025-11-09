@@ -22,7 +22,147 @@ namespace mita
 
         PacketMonitorService::~PacketMonitorService()
         {
+            stop();
             logger_->info("Packet Monitor Service shutting down");
+        }
+
+        void PacketMonitorService::start()
+        {
+            if (writer_running_.exchange(true))
+            {
+                return; // Already running
+            }
+
+            writer_thread_ = std::thread(&PacketMonitorService::writer_thread_func, this);
+            logger_->info("Packet Monitor async writer started");
+        }
+
+        void PacketMonitorService::stop()
+        {
+            if (!writer_running_.exchange(false))
+            {
+                return; // Already stopped
+            }
+
+            // Wake up writer thread to exit
+            queue_cv_.notify_all();
+
+            if (writer_thread_.joinable())
+            {
+                writer_thread_.join();
+            }
+
+            logger_->info("Packet Monitor async writer stopped");
+        }
+
+        void PacketMonitorService::writer_thread_func()
+        {
+            logger_->info("Async writer thread started");
+
+            while (writer_running_)
+            {
+                std::unique_lock<std::mutex> lock(queue_mutex_);
+
+                // Wait for packets/updates or shutdown signal
+                queue_cv_.wait_for(lock, std::chrono::milliseconds(100), [this]
+                                   { return !write_queue_.empty() || !update_queue_.empty() || !writer_running_; });
+
+                // Process all queued packets first
+                while (!write_queue_.empty())
+                {
+                    CapturedPacket packet = std::move(write_queue_.front());
+                    write_queue_.pop_front();
+
+                    // Unlock while writing to DB to prevent blocking packet capture
+                    lock.unlock();
+
+                    try
+                    {
+                        save_packet_to_db(packet);
+                    }
+                    catch (const std::exception &e)
+                    {
+                        logger_->error("Async writer failed to save packet",
+                                       core::LogContext()
+                                           .add("packet_id", packet.id)
+                                           .add("error", e.what()));
+                    }
+
+                    lock.lock();
+                }
+
+                // Process all queued updates
+                while (!update_queue_.empty())
+                {
+                    PacketUpdate update = std::move(update_queue_.front());
+                    update_queue_.pop_front();
+
+                    // Unlock while updating DB
+                    lock.unlock();
+
+                    try
+                    {
+                        if (update.type == PacketUpdate::DECRYPTED_PAYLOAD)
+                        {
+                            update_packet_decrypted_sync(update.packet_id, update.data);
+                        }
+                        else if (update.type == PacketUpdate::ERROR_FLAG)
+                        {
+                            update_packet_error_sync(update.packet_id, update.data, update.is_valid);
+                        }
+                    }
+                    catch (const std::exception &e)
+                    {
+                        logger_->debug("Async update failed (non-fatal)",
+                                       core::LogContext()
+                                           .add("packet_id", update.packet_id)
+                                           .add("error", e.what()));
+                    }
+
+                    lock.lock();
+                }
+            }
+
+            logger_->info("Async writer thread exiting");
+        }
+
+        void PacketMonitorService::enqueue_packet(const CapturedPacket &packet)
+        {
+            std::unique_lock<std::mutex> lock(queue_mutex_);
+
+            // Drop packets if queue is full to prevent memory exhaustion
+            if (write_queue_.size() >= MAX_QUEUE_SIZE)
+            {
+                logger_->warning("Write queue full, dropping packet",
+                                 core::LogContext()
+                                     .add("queue_size", write_queue_.size())
+                                     .add("max_size", MAX_QUEUE_SIZE)
+                                     .add("packet_id", packet.id));
+                return;
+            }
+
+            write_queue_.push_back(packet);
+            lock.unlock();
+            queue_cv_.notify_one();
+        }
+
+        void PacketMonitorService::enqueue_update(const PacketUpdate &update)
+        {
+            std::unique_lock<std::mutex> lock(queue_mutex_);
+
+            // Drop updates if queue is full to prevent memory exhaustion
+            if (update_queue_.size() >= MAX_QUEUE_SIZE)
+            {
+                logger_->debug("Update queue full, dropping update (non-fatal)",
+                                 core::LogContext()
+                                     .add("queue_size", update_queue_.size())
+                                     .add("packet_id", update.packet_id));
+                return;
+            }
+
+            update_queue_.push_back(update);
+            lock.unlock();
+            queue_cv_.notify_one();
         }
 
         std::string PacketMonitorService::capture_packet(const protocol::ProtocolPacket &packet,
@@ -85,14 +225,17 @@ namespace mita
                                  .add("direction", direction)
                                  .add("type", captured.message_type));
 
-                // Save to database if storage is available
-                if (storage_) {
-                    save_packet_to_db(captured);
-                } else {
+                // Enqueue for async saving if storage is available
+                if (storage_ && writer_running_) {
+                    enqueue_packet(captured);
+                } else if (!storage_) {
                     logger_->warning("Storage not available, packet not saved",
                                    core::LogContext().add("packet_id", captured.id));
+                } else {
+                    logger_->warning("Async writer not running, packet not saved",
+                                   core::LogContext().add("packet_id", captured.id));
                 }
-                
+
                 return captured.id;
             }
             catch (const std::exception &e)
@@ -175,10 +318,10 @@ namespace mita
                                    .add("size", raw_data.size())
                                    .add("transport", captured.transport));
 
-                // Save to database if storage is available
-                if (storage_)
+                // Enqueue for async saving if storage is available
+                if (storage_ && writer_running_)
                 {
-                    save_packet_to_db(captured);
+                    enqueue_packet(captured);
                 }
             }
             catch (const std::exception &e)
@@ -550,7 +693,43 @@ namespace mita
             return metrics;
         }
 
+        // Public async methods - enqueue updates for background processing
         bool PacketMonitorService::update_packet_error(const std::string &packet_id,
+                                                       const std::string &error_flags,
+                                                       bool is_valid)
+        {
+            if (!storage_ || packet_id.empty() || !writer_running_) {
+                return false;
+            }
+
+            PacketUpdate update;
+            update.type = PacketUpdate::ERROR_FLAG;
+            update.packet_id = packet_id;
+            update.data = error_flags;
+            update.is_valid = is_valid;
+
+            enqueue_update(update);
+            return true;
+        }
+
+        bool PacketMonitorService::update_packet_decrypted(const std::string &packet_id,
+                                                           const std::string &decrypted_payload)
+        {
+            if (!storage_ || packet_id.empty() || !writer_running_) {
+                return false;
+            }
+
+            PacketUpdate update;
+            update.type = PacketUpdate::DECRYPTED_PAYLOAD;
+            update.packet_id = packet_id;
+            update.data = decrypted_payload;
+
+            enqueue_update(update);
+            return true;
+        }
+
+        // Private sync methods - called by writer thread
+        bool PacketMonitorService::update_packet_error_sync(const std::string &packet_id,
                                                        const std::string &error_flags,
                                                        bool is_valid)
         {
@@ -583,7 +762,7 @@ namespace mita
             }
         }
 
-        bool PacketMonitorService::update_packet_decrypted(const std::string &packet_id,
+        bool PacketMonitorService::update_packet_decrypted_sync(const std::string &packet_id,
                                                            const std::string &decrypted_payload)
         {
             if (!storage_ || packet_id.empty()) {

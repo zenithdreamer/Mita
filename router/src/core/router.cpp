@@ -64,6 +64,7 @@ namespace mita
                 routing_service_->start();
                 statistics_service_->start();
                 device_management_->start();
+                packet_monitor_->start(); // Start async writer thread
 
                 // Initialize transports
                 bool any_transport_started = false;

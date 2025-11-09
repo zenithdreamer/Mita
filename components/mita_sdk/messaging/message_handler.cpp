@@ -1,4 +1,5 @@
 #include "../include/messaging/message_handler.h"
+#include "../shared/config/mita_config.h"
 #include <esp_log.h>
 #include <esp_timer.h>
 #include <esp_system.h>
@@ -6,9 +7,9 @@
 
 static const char *TAG = "MESSAGE_HANDLER";
 
-#ifndef LED_BUILTIN
-#define LED_BUILTIN GPIO_NUM_2
-#endif
+// Dual LED pins: external + fallback
+#define LED_PIN_EXTERNAL ((gpio_num_t)MITA_LED_PIN_EXTERNAL)
+#define LED_PIN_FALLBACK ((gpio_num_t)MITA_LED_PIN_FALLBACK)
 
 // CommandHandler implementation
 CommandHandler::CommandHandler(const std::string &device_id) : device_id(device_id) {}
@@ -71,13 +72,21 @@ bool CommandHandler::handleLedCommand(const std::string &command, DynamicJsonDoc
 {
     if (command == "led_on")
     {
-        gpio_set_level(LED_BUILTIN, 1);
+        // Toggle both external and fallback LEDs
+        gpio_set_level(LED_PIN_EXTERNAL, 1);
+        gpio_set_level(LED_PIN_FALLBACK, 1);
         response["status"] = "led_on";
+        ESP_LOGI(TAG, "LEDs ON - GPIO%d (external) + GPIO%d (fallback)",
+                 LED_PIN_EXTERNAL, LED_PIN_FALLBACK);
     }
     else if (command == "led_off")
     {
-        gpio_set_level(LED_BUILTIN, 0);
+        // Toggle both external and fallback LEDs
+        gpio_set_level(LED_PIN_EXTERNAL, 0);
+        gpio_set_level(LED_PIN_FALLBACK, 0);
         response["status"] = "led_off";
+        ESP_LOGI(TAG, "LEDs OFF - GPIO%d (external) + GPIO%d (fallback)",
+                 LED_PIN_EXTERNAL, LED_PIN_FALLBACK);
     }
     return true;
 }

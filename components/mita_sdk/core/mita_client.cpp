@@ -2,15 +2,16 @@
 #include "../include/transport/wifi_transport.h"
 #include "../include/transport/ble_transport.h"
 #include "../include/transport/protocol_selector.h"
+#include "../shared/config/mita_config.h"
 #include <driver/gpio.h>
 #include <esp_random.h>
 #include <esp_system.h>
 
 static const char *TAG = "MITA_CLIENT";
 
-#ifndef LED_BUILTIN
-#define LED_BUILTIN GPIO_NUM_2
-#endif
+// Dual LED pins: external + fallback
+#define LED_PIN_EXTERNAL ((gpio_num_t)MITA_LED_PIN_EXTERNAL)
+#define LED_PIN_FALLBACK ((gpio_num_t)MITA_LED_PIN_FALLBACK)
 
 MitaClient::MitaClient(const NetworkConfig &config)
     : transport(nullptr), network_config(config),
@@ -58,9 +59,15 @@ bool MitaClient::initialize()
 {
     ESP_LOGI(TAG, "MitaClient: Initializing...");
 
-    // Initialize LED pin
-    gpio_set_direction(LED_BUILTIN, GPIO_MODE_OUTPUT);
-    gpio_set_level(LED_BUILTIN, 0);
+    // Initialize dual LED pins (external + fallback)
+    gpio_set_direction(LED_PIN_EXTERNAL, GPIO_MODE_OUTPUT);
+    gpio_set_level(LED_PIN_EXTERNAL, 0);
+
+    gpio_set_direction(LED_PIN_FALLBACK, GPIO_MODE_OUTPUT);
+    gpio_set_level(LED_PIN_FALLBACK, 0);
+
+    ESP_LOGI(TAG, "MitaClient: LED pins initialized - External: GPIO%d, Fallback: GPIO%d",
+             LED_PIN_EXTERNAL, LED_PIN_FALLBACK);
 
     ESP_LOGI(TAG, "MitaClient: Device ID: %s", network_config.device_id.c_str());
     ESP_LOGI(TAG, "MitaClient: Router ID: %s", network_config.router_id.c_str());
@@ -842,11 +849,35 @@ void MitaClient::handleIncomingMessages()
                 std::string message = std::string((char *)decrypted, decrypted_length);
                 ESP_LOGI(TAG, "MitaClient: Received GCM authenticated message: %s\n", message.c_str());
 
+                // --- Send ACK back to router if QoS is required ---
+                bool requires_ack = (packet.priority_flags & FLAG_QOS_RELIABLE) != 0;
+                bool no_ack = (packet.priority_flags & FLAG_QOS_NO_ACK) != 0;
+                if (requires_ack || (!no_ack && !requires_ack)) {
+                    BasicProtocolPacket ack_packet;
+                    ack_packet.version_flags = (PROTOCOL_VERSION << 4);
+                    ack_packet.msg_type = MSG_ACK;
+                    ack_packet.source_addr = assigned_address;
+                    ack_packet.dest_addr = packet.source_addr; // router address
+                    ack_packet.checksum = 0;
+                    ack_packet.sequence_number = packet.sequence_number;
+                    ack_packet.ttl = DEFAULT_TTL;
+                    ack_packet.priority_flags = PRIORITY_NORMAL;
+                    ack_packet.fragment_id = 0;
+                    ack_packet.timestamp = getAdjustedTimestamp();
+                    // Payload: 2 bytes sequence number
+                    ack_packet.payload[0] = (packet.sequence_number >> 8) & 0xFF;
+                    ack_packet.payload[1] = packet.sequence_number & 0xFF;
+                    ack_packet.payload_length = 2;
+                    transport->sendPacket(ack_packet);
+                    ESP_LOGI(TAG, "MitaClient: Sent ACK for received DATA seq=%d to router", packet.sequence_number);
+                }
+
                 std::string response;
                 if (message_dispatcher.processMessage(message, response))
                 {
-                    // TODO: Test sending to non-existent device
-                    sendEncryptedMessage(0x1f3e, response);
+                    // Send response back to the sender without QoS to avoid sequence conflicts
+                    // Responses are typically acknowledgments and can tolerate packet loss
+                    sendEncryptedMessageWithQoS(packet.source_addr, response, QoSLevel::NO_QOS);
 
                     // Special handling for restart command
                     DynamicJsonDocument doc(256);

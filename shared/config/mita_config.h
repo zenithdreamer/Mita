@@ -26,4 +26,14 @@
 #define MITA_BLE_MIN_INTERVAL 0x06
 #define MITA_BLE_MAX_INTERVAL 0x12
 
+// LED pin configuration
+// Using external LED on D22 (GPIO22) with GPIO2 as fallback
+#ifndef MITA_LED_PIN_EXTERNAL
+#define MITA_LED_PIN_EXTERNAL 22  // D22 = GPIO22 (external LED)
+#endif
+
+#ifndef MITA_LED_PIN_FALLBACK
+#define MITA_LED_PIN_FALLBACK 2   // GPIO2 (onboard LED fallback)
+#endif
+
 #endif // MITA_CONFIG_H

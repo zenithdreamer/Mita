@@ -46,8 +46,13 @@ static const char *TAG = "DEMO_BIDIR";
 #define BUTTON_GPIO 0 // Boot button
 #endif
 
-#ifndef LED_GPIO
-#define LED_GPIO 2 // Onboard LED
+// Dual LED configuration (external + fallback)
+#ifndef LED_GPIO_EXTERNAL
+#define LED_GPIO_EXTERNAL 22 // D22 = GPIO22 (external LED)
+#endif
+
+#ifndef LED_GPIO_FALLBACK
+#define LED_GPIO_FALLBACK 2 // GPIO2 (onboard LED fallback)
 #endif
 
 // Button debounce
@@ -104,41 +109,15 @@ public:
     {
         ESP_LOGI(TAG, "Received toggle command from other device");
 
-        // Toggle self LED
+        // Toggle both LEDs (external + fallback)
         my_led_state = !my_led_state;
-        gpio_set_level((gpio_num_t)LED_GPIO, my_led_state ? 1 : 0);
+        gpio_set_level((gpio_num_t)LED_GPIO_EXTERNAL, my_led_state ? 1 : 0);
+        gpio_set_level((gpio_num_t)LED_GPIO_FALLBACK, my_led_state ? 1 : 0);
 
-        ESP_LOGI(TAG, "Self LED toggled: %s", my_led_state ? "ON" : "OFF");
+        ESP_LOGI(TAG, "LEDs toggled: %s - GPIO%d (ext) + GPIO%d (fallback)",
+                 my_led_state ? "ON" : "OFF", LED_GPIO_EXTERNAL, LED_GPIO_FALLBACK);
 
-        // Send acknowledgment back to sender
-        response["type"] = "toggle_ack";
-        response["state"] = my_led_state;
-        response["device"] = device_id;
-
-        return true; // Message handled, response will be sent
-    }
-};
-
-/**
- * Custom message handler for toggle acknowledgments
- * This handles responses from the other device
- */
-class ToggleAckHandler : public IMessageHandler
-{
-public:
-    bool canHandle(const std::string &message_type) const override
-    {
-        return message_type == "toggle_ack";
-    }
-
-    bool handleMessage(const DynamicJsonDocument &message, DynamicJsonDocument &response) override
-    {
-        const char *other_device = message["device"] | "UNKNOWN";
-        bool other_state = message["state"] | false;
-
-        ESP_LOGI(TAG, "Toggle ACK from %s: Other LED is now %s",
-                 other_device, other_state ? "ON" : "OFF");
-
+        // No need to send application-level ACK - protocol layer handles it automatically
         return true; // Message handled
     }
 };
@@ -174,11 +153,15 @@ void initGPIO()
     gpio_install_isr_service(0);
     gpio_isr_handler_add((gpio_num_t)BUTTON_GPIO, button_isr_handler, NULL);
 
-    // Configure LED (output, initially off)
-    gpio_set_direction((gpio_num_t)LED_GPIO, GPIO_MODE_OUTPUT);
-    gpio_set_level((gpio_num_t)LED_GPIO, 0);
+    // Configure dual LEDs (output, initially off)
+    gpio_set_direction((gpio_num_t)LED_GPIO_EXTERNAL, GPIO_MODE_OUTPUT);
+    gpio_set_level((gpio_num_t)LED_GPIO_EXTERNAL, 0);
 
-    ESP_LOGI(TAG, "GPIO initialized - Button: GPIO%d, LED: GPIO%d", BUTTON_GPIO, LED_GPIO);
+    gpio_set_direction((gpio_num_t)LED_GPIO_FALLBACK, GPIO_MODE_OUTPUT);
+    gpio_set_level((gpio_num_t)LED_GPIO_FALLBACK, 0);
+
+    ESP_LOGI(TAG, "GPIO initialized - Button: GPIO%d, LEDs: GPIO%d (ext) + GPIO%d (fallback)",
+             BUTTON_GPIO, LED_GPIO_EXTERNAL, LED_GPIO_FALLBACK);
 }
 
 /**
@@ -249,17 +232,34 @@ extern "C" void app_main(void)
         return;
     }
 
-    // Create protocol selector (ADAPTIVE learns best protocol)
-    ProtocolSelector *selector = new ProtocolSelector(DEVICE_ID, SelectionStrategy::ADAPTIVE);
+    // Create protocol selector with different preferences per device
+    // DEVICE_A prefers WiFi, DEVICE_B prefers BLE
+    ProtocolSelector *selector;
+
+    std::string device_id_str(DEVICE_ID);
+    if (device_id_str == "DEVICE_A")
+    {
+        selector = new ProtocolSelector(DEVICE_ID, SelectionStrategy::PREFER_WIFI);
+        ESP_LOGI(TAG, "Device A configured with WiFi preference");
+    }
+    else if (device_id_str == "DEVICE_B")
+    {
+        selector = new ProtocolSelector(DEVICE_ID, SelectionStrategy::PREFER_BLE);
+        ESP_LOGI(TAG, "Device B configured with BLE preference");
+    }
+    else
+    {
+        // Fallback to adaptive for unknown devices
+        selector = new ProtocolSelector(DEVICE_ID, SelectionStrategy::ADAPTIVE);
+        ESP_LOGI(TAG, "Unknown device - using ADAPTIVE strategy");
+    }
 
     // Create message handlers
     ToggleLEDHandler *toggleHandler = new ToggleLEDHandler(DEVICE_ID);
-    ToggleAckHandler *ackHandler = new ToggleAckHandler();
     CommandHandler *cmdHandler = new CommandHandler(DEVICE_ID);
     PingHandler *pingHandler = new PingHandler(DEVICE_ID);
 
     client->addMessageHandler(toggleHandler); // Handle incoming toggle commands
-    client->addMessageHandler(ackHandler);    // Handle toggle acknowledgments
     client->addMessageHandler(cmdHandler);
     client->addMessageHandler(pingHandler);
 

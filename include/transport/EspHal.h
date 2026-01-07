@@ -57,7 +57,7 @@ typedef union {
   };
 } spiClk_t;
 
-uint32_t getApbFrequency() {
+static inline uint32_t getApbFrequency() {
   rtc_cpu_freq_config_t conf;
   rtc_clk_cpu_freq_get_config(&conf);
 
@@ -68,7 +68,7 @@ uint32_t getApbFrequency() {
   return((conf.source_freq_mhz * MHZ) / conf.div);
 }
 
-uint32_t spiFrequencyToClockDiv(uint32_t freq) {
+static inline uint32_t spiFrequencyToClockDiv(uint32_t freq) {
   uint32_t apb_freq = getApbFrequency();
   if(freq >= apb_freq) {
     return SPI_CLK_EQU_SYSCLK;
@@ -131,6 +131,8 @@ class EspHal : public RadioLibHal {
       : RadioLibHal(INPUT, OUTPUT, LOW, HIGH, RISING, FALLING),
       spiSCK(sck), spiMISO(miso), spiMOSI(mosi)  {
     }
+
+    virtual ~EspHal() = default;
 
     void init() override {
       // we only need to init the SPI here

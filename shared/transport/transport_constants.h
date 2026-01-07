@@ -22,4 +22,7 @@
 #define MITA_ROUTER_SSID_PATTERN "Mita_Router"
 #define MITA_NETWORK_SSID "Mita_Network"
 
+#define MITA_LORA_SYNC_WORD 0x34
+#define MITA_LORA_MAX_PACKET_SIZE 255
+
 #endif // TRANSPORT_CONSTANTS_H

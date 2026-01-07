@@ -77,12 +77,14 @@ enum class MessageType : uint8_t
 enum class TransportType : uint8_t
 {
     WIFI = 0,
-    BLE = 1
+    BLE = 1,
+    LORA = 2
 };
 
 // Universal constants that work for both C++ router and Arduino client
 constexpr TransportType TRANSPORT_WIFI = TransportType::WIFI;
 constexpr TransportType TRANSPORT_BLE = TransportType::BLE;
+constexpr TransportType TRANSPORT_LORA = TransportType::LORA;
 
 constexpr uint8_t MSG_HELLO = static_cast<uint8_t>(MessageType::HELLO);
 constexpr uint8_t MSG_CHALLENGE = static_cast<uint8_t>(MessageType::CHALLENGE);

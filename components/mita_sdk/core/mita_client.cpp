@@ -1330,7 +1330,7 @@ bool MitaClient::performSessionRekey()
     packet.payload_length = 20;
     
     // Send rekey request
-    ESP_LOGI(TAG, "MitaClient: Sending SESSION_REKEY_REQ (packets_sent=%u)\n", packets_sent);
+    ESP_LOGI(TAG, "MitaClient: Sending SESSION_REKEY_REQ (packets_sent=%lu)\n", (unsigned long)packets_sent);
     if (!transport->sendPacket(packet)) {
         ESP_LOGI(TAG, "%s", "MitaClient: Failed to send SESSION_REKEY_REQ");
         return false;

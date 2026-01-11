@@ -43,6 +43,28 @@ namespace mita
             nlohmann::json to_json() const;
         };
 
+
+        struct LoRaConfig
+        {
+            bool enabled = false;
+            float frequency = 433.0;        // our antenna frequency is 433
+            float bandwidth = 125.0;       
+            int spreading_factor = 7;       
+            int coding_rate = 5;          
+            int tx_power = 17;             
+            int sync_word = 0x12;           
+            int preamble_length = 8;    
+            std::string spi_device = "/dev/spidev0.0";
+            int cs_pin = 8;              
+            int rst_pin = 22;            
+            int dio0_pin = 4;           
+            int max_connections = 10;      
+            int receive_timeout = 1000;  
+
+            void from_json(const nlohmann::json &j);
+            nlohmann::json to_json() const;
+        };
+
         /**
          * Routing configuration
          */
@@ -110,6 +132,7 @@ namespace mita
             // Sub-configurations
             WiFiConfig wifi;
             BLEConfig ble;
+            LoRaConfig lora;
             RoutingConfig routing;
             SecurityConfig security;
             LoggingConfig logging;

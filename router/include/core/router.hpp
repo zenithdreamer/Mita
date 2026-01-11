@@ -71,16 +71,20 @@ namespace mita
             bool stop_wifi_transport();
             bool start_ble_transport();
             bool stop_ble_transport();
+            bool start_lora_transport();
+            bool stop_lora_transport();
             bool is_transport_running(const std::string& transport_name) const;
 
             // for api access
             core::TransportInterface* get_wifi_transport();
             core::TransportInterface* get_ble_transport();
+            core::TransportInterface* get_lora_transport();
 
         private:
             // Setup methods
             bool setup_wifi_transport();
             bool setup_ble_transport();
+            bool setup_lora_transport();
             void start_background_tasks();
             void run_main_loop();
             void run_status_monitor();

@@ -37,7 +37,8 @@ namespace mita
         enum class TransportType
         {
             WIFI,
-            BLE
+            BLE,
+            LORA
         };
 
         /**

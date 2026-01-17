@@ -90,8 +90,8 @@ namespace mita
                 std::shared_ptr<core::Logger> logger_;
             };
 
-        } 
-    }  
-} 
+        } // namespace lora
+    } // namespace transports
+} // namespace mita
 
-#endif 
+#endif // MITA_ROUTER_LORA_TRANSPORT_HPP

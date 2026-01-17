@@ -26,9 +26,9 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 echo -e "${GREEN}Starting Mita Router...${NC}"
-echo -e "${YELLOW}HTTP API: http://localhost:8080${NC}"
-echo -e "${YELLOW}Swagger UI: http://localhost:8080/swagger/ui${NC}"
-echo -e "${YELLOW}OpenAPI JSON: http://localhost:8080/api-docs/oas-3.0.0.json${NC}"
+echo -e "${YELLOW}HTTP API: http://192.168.1.42:8080${NC}"
+echo -e "${YELLOW}Swagger UI: http://192.168.1.42:8080/swagger/ui${NC}"
+echo -e "${YELLOW}OpenAPI JSON: http://192.168.1.42:8080/api-docs/oas-3.0.0.json${NC}"
 echo ""
 
 # Run with config

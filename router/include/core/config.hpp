@@ -46,20 +46,20 @@ namespace mita
 
         struct LoRaConfig
         {
-            bool enabled = false;
-            float frequency = 433.0;        // our antenna frequency is 433
-            float bandwidth = 125.0;       
-            int spreading_factor = 7;       
-            int coding_rate = 5;          
-            int tx_power = 17;             
-            int sync_word = 0x12;           
-            int preamble_length = 8;    
+            bool enabled = true; 
+            float frequency = 433.0;
+            float bandwidth = 125.0;        
+            int spreading_factor = 10;     
+            int coding_rate = 5;
+            int tx_power = 17;
+            int sync_word = 0x34;
+            int preamble_length = 12; 
             std::string spi_device = "/dev/spidev0.0";
-            int cs_pin = 8;              
+            int cs_pin = 25;            
             int rst_pin = 22;            
-            int dio0_pin = 4;           
+            int dio0_pin = 4;                 
             int max_connections = 10;      
-            int receive_timeout = 1000;  
+            int receive_timeout = 5000;  
 
             void from_json(const nlohmann::json &j);
             nlohmann::json to_json() const;

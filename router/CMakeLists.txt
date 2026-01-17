@@ -9,9 +9,10 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type")
 option(BUILD_TESTS "Build tests" ON)
 
-# Always enable WiFi and BLE;
+# Always enable WiFi, BLE, and LoRa
 set(ENABLE_WIFI ON)
 set(ENABLE_BLE ON)
+set(ENABLE_LORA ON)
 
 # Platform-specific settings for Raspberry Pi
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64" OR CMAKE_SYSTEM_PROCESSOR MATCHES "armv7l")
@@ -68,6 +69,9 @@ list(APPEND TRANSPORT_SOURCES ${WIFI_SOURCES})
 file(GLOB_RECURSE BLE_SOURCES "src/transports/ble/*.cpp")
 list(APPEND TRANSPORT_SOURCES ${BLE_SOURCES})
 
+file(GLOB_RECURSE LORA_SOURCES "src/transports/lora/*.cpp")
+list(APPEND TRANSPORT_SOURCES ${LORA_SOURCES})
+
 # Fetch sqlite_orm (header-only ORM library)
 include(FetchContent)
 FetchContent_Declare(sqlite_orm
@@ -119,6 +123,30 @@ endif()
 
 # Define swagger resource path
 add_definitions(-DOATPP_SWAGGER_RES_PATH="${oatpp-swagger_SOURCE_DIR}/res")
+
+# Fetch RadioLib for LoRa support
+message(STATUS "Fetching RadioLib for LoRa support")
+FetchContent_Declare(
+    RadioLib
+    GIT_REPOSITORY https://github.com/jgromes/RadioLib.git
+    GIT_TAG 6.6.0
+)
+
+set(RADIOLIB_STATIC ON CACHE BOOL "" FORCE)
+set(RADIOLIB_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(RADIOLIB_PLATFORM "Generic" CACHE STRING "" FORCE)
+
+FetchContent_MakeAvailable(RadioLib)
+
+if(TARGET RadioLib)
+    target_compile_options(RadioLib PRIVATE -w)
+endif()
+
+# Find lgpio library for Raspberry Pi GPIO/SPI access
+find_library(LGPIO_LIBRARY lgpio)
+if(NOT LGPIO_LIBRARY)
+    message(FATAL_ERROR "lgpio library not found. Install with: sudo apt install liblgpio-dev")
+endif()
 
 # Main executable
 add_executable(mita_router
@@ -175,6 +203,11 @@ target_link_libraries(mita_router bluetooth)
 
 target_compile_definitions(mita_router PRIVATE ENABLE_BLE)
 
+# LoRa-specific libraries (RadioLib + lgpio for Raspberry Pi)
+target_link_libraries(mita_router RadioLib ${LGPIO_LIBRARY})
+target_include_directories(mita_router PRIVATE ${RadioLib_SOURCE_DIR}/src)
+target_compile_definitions(mita_router PRIVATE ENABLE_LORA)
+
 # Install targets
 install(TARGETS mita_router DESTINATION bin)
 install(FILES config/router_config.json DESTINATION etc/mita)
@@ -199,5 +232,6 @@ message(STATUS "=== Mita Router Configuration ===")
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 message(STATUS "WiFi transport: ON (forced)")
 message(STATUS "BLE transport: ON (L2CAP)")
+message(STATUS "LoRa transport: ON")
 message(STATUS "Raspberry Pi: ${RASPBERRY_PI}")
 message(STATUS "Build tests: ${BUILD_TESTS}")

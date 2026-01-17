@@ -7,6 +7,7 @@
 #include "services/packet_monitor_service.hpp"
 #include "transports/wifi_transport.hpp"
 #include "transports/ble/ble_transport.hpp"
+#include "transports/lora/lora_transport.hpp"
 #include "infrastructure/wifi_manager.hpp"
 #include <thread>
 #include <chrono>
@@ -103,6 +104,25 @@ namespace mita
                 {
                     logger_->info("BLE transport disabled");
                 }
+
+
+                if (config_->lora.enabled)
+                {
+                    if (setup_lora_transport())
+                    {
+                        any_transport_started = true;
+                        logger_->info("LoRa transport started successfully");
+                    }
+                    else
+                    {
+                        logger_->warning("LoRa transport failed to start");
+                    }
+                }
+                else
+                {
+                    logger_->info("LoRa transport disabled");
+                }
+
 
                 if (!any_transport_started)
                 {
@@ -625,6 +645,120 @@ namespace mita
                 return false;
             }
         }
+
+
+        bool MitaRouter::setup_lora_transport()
+        {
+            if (!config_->lora.enabled)
+            {
+                logger_->info("LoRa transport disabled in configuration");
+                return false;
+            }
+
+            try
+            {
+                logger_->info("Setting up LoRa transport...");
+
+                auto lora_transport = std::make_unique<transports::lora::LoRaTransport>(
+                    *config_, *routing_service_, *device_management_, *statistics_service_, packet_monitor_);
+
+                if (lora_transport->start())
+                {
+                    std::lock_guard<std::mutex> lock(transports_mutex_);
+                    transports_["lora"] = std::move(lora_transport);
+                    logger_->info("LoRa transport started successfully");
+                    return true;
+                }
+                else
+                {
+                    logger_->error("Failed to start LoRa transport");
+                    return false;
+                }
+            }
+            catch (const std::exception &e)
+            {
+                logger_->error("Error setting up LoRa transport",
+                               LogContext().add("error", e.what()));
+                return false;
+            }
+        }
+
+        bool MitaRouter::start_lora_transport()
+        {
+            if (!running_)
+            {
+                logger_->warning("Cannot start LoRa transport: router not running");
+                return false;
+            }
+
+            std::lock_guard<std::mutex> lock(transports_mutex_);
+
+            if (transports_.find("lora") != transports_.end())
+            {
+                logger_->info("LoRa transport is already running");
+                return true;
+            }
+
+            config_->lora.enabled = true;
+
+            // Release lock to avoid deadlock when calling setup
+            transports_mutex_.unlock();
+            bool success = setup_lora_transport();
+            transports_mutex_.lock();
+
+            if (success)
+            {
+                logger_->info("LoRa transport started successfully");
+            }
+            else
+            {
+                logger_->error("Failed to start LoRa transport");
+                config_->lora.enabled = false;
+            }
+
+            return success;
+        }
+
+        bool MitaRouter::stop_lora_transport()
+        {
+            std::lock_guard<std::mutex> lock(transports_mutex_);
+
+            auto it = transports_.find("lora");
+            if (it == transports_.end())
+            {
+                logger_->info("LoRa transport is not running");
+                return true;
+            }
+
+            logger_->info("Stopping LoRa transport...");
+
+            try
+            {
+
+                it->second->stop();
+
+                transports_.erase(it);
+
+                config_->lora.enabled = false;
+
+                logger_->info("LoRa transport stopped successfully");
+                return true;
+            }
+            catch (const std::exception &e)
+            {
+                logger_->error("Error stopping LoRa transport",
+                               LogContext().add("error", e.what()));
+                return false;
+            }
+        }
+
+        core::TransportInterface* MitaRouter::get_lora_transport()
+        {
+            std::lock_guard<std::mutex> lock(transports_mutex_);
+            auto it = transports_.find("lora");
+            return (it != transports_.end()) ? it->second.get() : nullptr;
+        }
+
 
         bool MitaRouter::is_transport_running(const std::string& transport_name) const
         {

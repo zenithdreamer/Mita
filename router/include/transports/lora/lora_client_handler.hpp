@@ -1,5 +1,5 @@
-#ifndef MITA_ROUTER_WIFI_CLIENT_HANDLER_HPP
-#define MITA_ROUTER_WIFI_CLIENT_HANDLER_HPP
+#ifndef MITA_ROUTER_LORA_CLIENT_HANDLER_HPP
+#define MITA_ROUTER_LORA_CLIENT_HANDLER_HPP
 
 #include "core/transport_interface.hpp"
 #include "protocol/protocol.hpp"
@@ -8,10 +8,8 @@
 #include <memory>
 #include <string>
 #include <optional>
-
-// Linux networking
-#include <sys/socket.h>
-#include <netinet/in.h>
+#include <chrono>
+#include <functional>
 
 
 namespace mita {
@@ -31,6 +29,9 @@ class PacketMonitorService;
 namespace mita {
     namespace transports {
         namespace lora {
+
+            using SendPacketCallback = std::function<bool(uint8_t dest_addr, const protocol::ProtocolPacket&)>;
+
             class LoRaClientHandler
             {
             public:
@@ -39,6 +40,7 @@ namespace mita {
                                   services::RoutingService &routing_service,
                                   services::DeviceManagementService &device_management,
                                   services::StatisticsService &statistics_service,
+                                  SendPacketCallback send_callback,
                                   std::shared_ptr<services::PacketMonitorService> packet_monitor = nullptr);
                 ~LoRaClientHandler();
 
@@ -56,6 +58,11 @@ namespace mita {
                 std::chrono::steady_clock::time_point get_disconnect_time() const;
 
             private:
+                void handle_handshake_packet(const protocol::ProtocolPacket &packet);
+                void handle_data_packet(const protocol::ProtocolPacket &packet);
+                void handle_heartbeat_packet(const protocol::ProtocolPacket &packet);
+                bool send_packet(const protocol::ProtocolPacket &packet);
+
                 uint8_t lora_address_;
                 std::string device_id_;
                 bool authenticated_;
@@ -70,9 +77,13 @@ namespace mita {
                 services::StatisticsService &statistics_service_;
                 std::shared_ptr<services::PacketMonitorService> packet_monitor_;
                 std::shared_ptr<core::Logger> logger_;
-            };
-        }
-}}        
 
-    
-#endif
+                SendPacketCallback send_callback_;
+                std::unique_ptr<protocol::HandshakeManager> handshake_manager_;
+            };
+
+        } // namespace lora
+    } // namespace transports
+} // namespace mita
+
+#endif // MITA_ROUTER_LORA_CLIENT_HANDLER_HPP

@@ -1,23 +1,23 @@
 #ifndef MITA_ROUTER_LORA_RADIO_HPP
 #define MITA_ROUTER_LORA_RADIO_HPP
 
-#include "core/transport_interface.hpp"
-#include "protocol/protocol.hpp"
-#include "transports/lora/lora_client_handler.hpp"
-#include <thread>
-#include <atomic>
-#include <map>
-#include <set>
 #include <mutex>
 #include <memory>
-#include <RadioLib.h>
+#include <cstdint>
+#include "transports/lora/pihal.h"
 
+namespace mita {
+namespace core {
+class RouterConfig;
+class Logger;
+}
+}
 
 namespace mita {
     namespace transports {
         namespace lora {
 
-          class LoRaRadio
+            class LoRaRadio
             {
             public:
                 LoRaRadio(const core::RouterConfig &config);
@@ -38,7 +38,7 @@ namespace mita {
                 bool set_coding_rate(uint8_t cr);
                 bool set_tx_power(int8_t power_dbm);
                 bool set_sync_word(uint8_t sync_word);
-
+                bool set_preamble_length(uint16_t length);
 
                 int get_rssi();
                 float get_snr();
@@ -47,16 +47,17 @@ namespace mita {
                 const core::RouterConfig &config_;
                 std::shared_ptr<core::Logger> logger_;
 
-
+                // RadioLib HAL for Raspberry Pi
+                std::unique_ptr<PiHal> hal_;
                 std::unique_ptr<Module> lora_module_;
                 std::unique_ptr<SX1278> lora_;
 
                 bool initialized_;
                 std::mutex radio_mutex_;
             };
-        }
-    }
-}
 
+        } // namespace lora
+    } // namespace transports
+} // namespace mita
 
-#endif
+#endif // MITA_ROUTER_LORA_RADIO_HPP

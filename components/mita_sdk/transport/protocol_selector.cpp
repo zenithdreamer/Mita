@@ -81,13 +81,17 @@ TransportType ProtocolSelector::selectBestProtocol()
     
     case SelectionStrategy::PREFER_BLE:
         return TRANSPORT_BLE;
+
+    case SelectionStrategy::PREFER_LORA:
+        return TRANSPORT_LORA;
+    
     
     case SelectionStrategy::LAST_SUCCESSFUL:
         if (wifi_stats.last_success_time > ble_stats.last_success_time) {
             return TRANSPORT_WIFI;
         }
         return TRANSPORT_BLE;
-    
+
     case SelectionStrategy::FASTEST:
         if (wifi_stats.avg_connect_time_ms < ble_stats.avg_connect_time_ms) {
             return TRANSPORT_WIFI;

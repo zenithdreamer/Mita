@@ -37,6 +37,7 @@ struct ConnectionStats {
 enum class SelectionStrategy {
     PREFER_WIFI,        // Always try WiFi first (default)
     PREFER_BLE,         // Always try BLE first
+    PREFER_LORA,        // Always try LoRa first
     ADAPTIVE,           // Learn from history and signal strength
     LAST_SUCCESSFUL,    // Use whatever worked last time
     FASTEST,            // Use protocol with fastest recent connection time

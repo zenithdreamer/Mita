@@ -31,7 +31,7 @@ fi
 
 # Check and install system dependencies
 echo -e "${YELLOW}Checking system dependencies...${NC}"
-REQUIRED_PACKAGES="build-essential cmake pkg-config libdbus-1-dev libnm-dev nlohmann-json3-dev libssl-dev libsqlite3-dev"
+REQUIRED_PACKAGES="build-essential cmake pkg-config libdbus-1-dev libnm-dev nlohmann-json3-dev libssl-dev libsqlite3-dev liblgpio-dev"
 MISSING_PACKAGES=""
 
 for pkg in $REQUIRED_PACKAGES; do

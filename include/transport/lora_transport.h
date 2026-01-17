@@ -19,20 +19,19 @@
 #define LORA_PIN_DIO1  -1
 
 //
-#define LORA_FREQUENCY              433.0f  // MHz
-#define LORA_BANDWIDTH              500.0f  // kHz
-#define LORA_SPREADING_FACTOR       7      
-#define LORA_CODING_RATE            5       
+#define LORA_FREQUENCY              433.0f
+#define LORA_BANDWIDTH              125.0f  
+#define LORA_SPREADING_FACTOR       10      
+#define LORA_CODING_RATE            5
 #define LORA_SYNC_WORD              0x34
-#define LORA_OUTPUT_POWER           2 //dpm
-#define LORA_PREAMBLE_LENGTH        20 //symbols
-
+#define LORA_OUTPUT_POWER           17
+#define LORA_PREAMBLE_LENGTH        12   
 
 class LoRaTransport : public ITransport {
 private:
     std::string device_id;
     std::string router_id;
-
+    uint8_t lora_address; 
     EspHal* hal;  
     Module* module;
 

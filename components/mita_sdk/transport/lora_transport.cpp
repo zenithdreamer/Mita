@@ -59,7 +59,7 @@ bool LoRaTransport::initializeLoRa()
     }
 
     lora->setCRC(true);
-
+    lora->explicitHeader();
     lora_initialized = true;
 
     ESP_LOGI(TAG, "LoRa module initialized successfully");
@@ -86,13 +86,8 @@ bool LoRaTransport::connect()
 
 void LoRaTransport::disconnect()
 {
-    if (lora) {
-        lora->sleep(); 
-        ESP_LOGI(TAG, "LoRa radio put to sleep");
-    }
     connected = false;
-    lora_initialized = false;
-    ESP_LOGI(TAG, "LoRaTransport disconnected");
+    ESP_LOGI(TAG, "LoRaTransport disconnected (radio still active)");
 }
 
 bool LoRaTransport::isConnected() const 
@@ -132,12 +127,24 @@ bool LoRaTransport::receivePacket(BasicProtocolPacket& packet, unsigned long tim
         return false;
     }
 
-
     uint8_t rx_buffer[MITA_LORA_MAX_PACKET_SIZE];
 
     ESP_LOGI(TAG, "Listening for packets (timeout: %lu ms)...", timeout_ms);
 
-    int16_t state = lora->receive(rx_buffer, MITA_LORA_MAX_PACKET_SIZE);
+
+    unsigned long start_time = (unsigned long)(esp_timer_get_time() / 1000ULL);
+    int16_t state = RADIOLIB_ERR_RX_TIMEOUT;
+
+    while ((unsigned long)(esp_timer_get_time() / 1000ULL) - start_time < timeout_ms) {
+
+        state = lora->receive(rx_buffer, MITA_LORA_MAX_PACKET_SIZE);
+
+        if (state != RADIOLIB_ERR_RX_TIMEOUT) {
+            break;  
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
 
     if (state > 0) {
 
@@ -147,10 +154,9 @@ bool LoRaTransport::receivePacket(BasicProtocolPacket& packet, unsigned long tim
         float snr = lora->getSNR();
         ESP_LOGI(TAG, "RSSI: %.2f dBm, SNR: %.2f dB", rssi, snr);
 
-
         ESP_LOG_BUFFER_HEX(TAG, rx_buffer, state);
 
-        // Deserialize MITA packet
+
         if (PacketUtils::deserializePacket(rx_buffer, state, packet)) {
             ESP_LOGI(TAG, "✓ MITA packet deserialized: msg_type=0x%02X, src=0x%04X, dst=0x%04X, payload_len=%d",
                      packet.msg_type, packet.source_addr, packet.dest_addr, packet.payload_length);

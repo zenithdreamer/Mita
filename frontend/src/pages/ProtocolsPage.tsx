@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useToast } from "@/hooks/use-toast"
 import { getSettings, updateSettings } from "@/api/sdk.gen"
-import type { UpdateSettingsRequestDto } from "@/api/types.gen"
+import type { SettingsDto } from "@/api/types.gen"
 
 interface ProtocolConfigProps {
   name: string
@@ -140,7 +140,7 @@ export function ProtocolsPage() {
   const updateTransportSettings = async (newSettings: Settings, transportType: keyof LoadingStates) => {
     setLoadingStates(prev => ({ ...prev, [transportType]: true }))
     try {
-      const requestBody: UpdateSettingsRequestDto = {
+      const requestBody: SettingsDto = {
         wifiEnabled: newSettings.wifiEnabled,
         bleEnabled: newSettings.bleEnabled,
         zigbeeEnabled: newSettings.zigbeeEnabled,

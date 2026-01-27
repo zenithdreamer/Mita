@@ -1,4 +1,4 @@
-import { Settings2, Network, Shield, Bell, User } from "lucide-react"
+import { Settings2, Network, Shield, Bell } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
